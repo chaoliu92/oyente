@@ -9,6 +9,7 @@ import six
 from source_map import SourceMap
 from utils import run_command, run_command_with_err
 
+
 class InputHelper:
     BYTECODE = 0
     SOLIDITY = 1
@@ -72,7 +73,8 @@ class InputHelper:
                 c_source, cname = contract.split(':')
                 c_source = re.sub(self.root_path, "", c_source)
                 if self.input_type == InputHelper.SOLIDITY:
-                    source_map = SourceMap(contract, self.source, 'solidity', self.root_path, self.remap, self.allow_paths)
+                    source_map = SourceMap(contract, self.source, 'solidity', self.root_path, self.remap,
+                                           self.allow_paths)
                 else:
                     source_map = SourceMap(contract, self.source, 'standard json', self.root_path)
                 disasm_file = self._get_temporary_files(contract)['disasm']
@@ -172,7 +174,7 @@ class InputHelper:
     def _link_libraries(self, filename, libs):
         option = ""
         for idx, lib in enumerate(libs):
-            lib_address = "0x" + hex(idx+1)[2:].zfill(40)
+            lib_address = "0x" + hex(idx + 1)[2:].zfill(40)
             option += " --libraries %s:%s" % (lib, lib_address)
         FNULL = open(os.devnull, 'w')
         if not self.allow_paths:
@@ -180,7 +182,7 @@ class InputHelper:
         else:
             cmd = "solc --bin-runtime %s %s --allow-paths %s" % (self.remap, self.source, self.allow_paths)
         p1 = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE, stderr=FNULL)
-        cmd = "solc --link%s" %option
+        cmd = "solc --link%s" % option
         p2 = subprocess.Popen(shlex.split(cmd), stdin=p1.stdout, stdout=subprocess.PIPE, stderr=FNULL)
         p1.stdout.close()
         out = p2.communicate()[0].decode('utf-8', 'strict')
@@ -238,4 +240,3 @@ class InputHelper:
     def _rm_file(self, path):
         if os.path.isfile(path):
             os.unlink(path)
-

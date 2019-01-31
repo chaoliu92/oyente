@@ -20,17 +20,20 @@ from basicblock import BasicBlock
 from analysis import *
 from test_evm.global_test_params import (TIME_OUT, UNKNOWN_INSTRUCTION,
                                          EXCEPTION, PICKLE_PATH)
-from vulnerability import CallStack, TimeDependency, MoneyConcurrency, Reentrancy, AssertionFailure, ParityMultisigBug2, IntegerUnderflow, IntegerOverflow
+from vulnerability import CallStack, TimeDependency, MoneyConcurrency, Reentrancy, AssertionFailure, ParityMultisigBug2, \
+    IntegerUnderflow, IntegerOverflow
+from input_helper import InputHelper
 import global_params
 
 log = logging.getLogger(__name__)
 
-UNSIGNED_BOUND_NUMBER = 2**256 - 1
+UNSIGNED_BOUND_NUMBER = 2 ** 256 - 1
 CONSTANT_ONES_159 = BitVecVal((1 << 160) - 1, 256)
 
 Assertion = namedtuple('Assertion', ['pc', 'model'])
 Underflow = namedtuple('Underflow', ['pc', 'model'])
 Overflow = namedtuple('Overflow', ['pc', 'model'])
+
 
 class Parameter:
     def __init__(self, **kwargs):
@@ -52,6 +55,7 @@ class Parameter:
     def copy(self):
         _kwargs = custom_deepcopy(self.__dict__)
         return Parameter(**_kwargs)
+
 
 def initGlobalVars():
     global g_src_map
@@ -152,7 +156,8 @@ def initGlobalVars():
     path_conditions = []
 
     global global_problematic_pcs
-    global_problematic_pcs = {"money_concurrency_bug": [], "reentrancy_bug": [], "time_dependency_bug": [], "assertion_failure": [], "integer_underflow": [], "integer_overflow": []}
+    global_problematic_pcs = {"money_concurrency_bug": [], "reentrancy_bug": [], "time_dependency_bug": [],
+                              "assertion_failure": [], "integer_underflow": [], "integer_overflow": []}
 
     # store global variables, e.g. storage, balance of all paths
     global all_gs
@@ -176,13 +181,16 @@ def initGlobalVars():
     if global_params.REPORT_MODE:
         rfile = open(g_disasm_file + '.report', 'w')
 
+
 def is_testing_evm():
     return global_params.UNIT_TEST != 0
+
 
 def compare_storage_and_gas_unit_test(global_state, analysis):
     unit_test = pickle.load(open(PICKLE_PATH, 'rb'))
     test_status = unit_test.compare_with_symExec_result(global_state, analysis)
     exit(test_status)
+
 
 def change_format():
     with open(g_disasm_file) as disasm_file:
@@ -196,15 +204,15 @@ def change_format():
             line = line.replace('Missing opcode', 'INVALID')
             line = line.replace(':', '')
             lineParts = line.split(' ')
-            try: # removing initial zeroes
+            try:  # removing initial zeroes
                 lineParts[0] = str(int(lineParts[0]))
 
             except:
                 lineParts[0] = lineParts[0]
             lineParts[-1] = lineParts[-1].strip('\n')
-            try: # adding arrow if last is a number
+            try:  # adding arrow if last is a number
                 lastInt = lineParts[-1]
-                if(int(lastInt, 16) or int(lastInt, 16) == 0) and len(lineParts) > 2:
+                if (int(lastInt, 16) or int(lastInt, 16) == 0) and len(lineParts) > 2:
                     lineParts[-1] = "=>"
                     lineParts.append(lastInt)
             except Exception:
@@ -216,6 +224,7 @@ def change_format():
 
     with open(g_disasm_file, 'w') as disasm_file:
         disasm_file.write("\n".join(file_contents))
+
 
 def build_cfg_and_analyze():
     change_format()
@@ -262,6 +271,7 @@ def mapping_push_instruction(current_line_content, current_ins_address, idx, pos
                 raise Exception("Source map error")
     return idx
 
+
 def mapping_non_push_instruction(current_line_content, current_ins_address, idx, positions, length):
     global g_src_map
 
@@ -280,6 +290,7 @@ def mapping_non_push_instruction(current_line_content, current_ins_address, idx,
             else:
                 raise Exception("Source map error")
     return idx
+
 
 # 1. Parse the disassembled file
 # 2. Then identify each basic block (i.e. one-in, one-out)
@@ -310,7 +321,8 @@ def collect_vertices(tokens):
                     is_new_line = True
                     current_line_content += push_val + ' '
                     instructions[current_ins_address] = current_line_content
-                    idx = mapping_push_instruction(current_line_content, current_ins_address, idx, positions, length) if g_src_map else None
+                    idx = mapping_push_instruction(current_line_content, current_ins_address, idx, positions,
+                                                   length) if g_src_map else None
                     log.debug(current_line_content)
                     current_line_content = ""
                     wait_for_push = False
@@ -338,7 +350,8 @@ def collect_vertices(tokens):
             is_new_line = True
             log.debug(current_line_content)
             instructions[current_ins_address] = current_line_content
-            idx = mapping_non_push_instruction(current_line_content, current_ins_address, idx, positions, length) if g_src_map else None
+            idx = mapping_non_push_instruction(current_line_content, current_ins_address, idx, positions,
+                                               length) if g_src_map else None
             current_line_content = ""
             continue
         elif tok_type == NAME:
@@ -407,14 +420,14 @@ def add_falls_to():
     key_list = sorted(jump_type.keys())
     length = len(key_list)
     for i, key in enumerate(key_list):
-        if jump_type[key] != "terminal" and jump_type[key] != "unconditional" and i+1 < length:
-            target = key_list[i+1]
+        if jump_type[key] != "terminal" and jump_type[key] != "unconditional" and i + 1 < length:
+            target = key_list[i + 1]
             edges[key].append(target)
             vertices[key].set_falls_to(target)
 
 
 def get_init_global_state(path_conditions_and_vars):
-    global_state = {"balance" : {}, "pc": 0}
+    global_state = {"balance": {}, "pc": 0}
     init_is = init_ia = deposited_value = sender_address = receiver_address = gas_price = origin = currentCoinbase = currentNumber = currentDifficulty = currentGasLimit = callData = None
 
     if global_params.INPUT_STATE:
@@ -518,6 +531,7 @@ def get_init_global_state(path_conditions_and_vars):
 
     return global_state
 
+
 def get_start_block_to_func_sig():
     state = 0
     func_sig = None
@@ -536,9 +550,10 @@ def get_start_block_to_func_sig():
             state = 0
     return start_block_to_func_sig
 
+
 def full_sym_exec():
     # executing, starting from beginning
-    path_conditions_and_vars = {"path_condition" : []}
+    path_conditions_and_vars = {"path_condition": []}
     global_state = get_init_global_state(path_conditions_and_vars)
     analysis = init_analysis()
     params = Parameter(path_conditions_and_vars=path_conditions_and_vars, global_state=global_state, analysis=analysis)
@@ -557,6 +572,7 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
     global all_gs
     global results
     global g_src_map
+    global g_trace
 
     visited = params.visited
     stack = params.stack
@@ -569,7 +585,7 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
     calls = params.calls
     overflow_pcs = params.overflow_pcs
 
-    Edge = namedtuple("Edge", ["v1", "v2"]) # Factory Function for tuples is used as dictionary key
+    Edge = namedtuple("Edge", ["v1", "v2"])  # Factory Function for tuples is used as dictionary key
     if block < 0:
         log.debug("UNKNOWN JUMP ADDRESS. TERMINATING THIS PATH")
         return ["ERROR"]
@@ -583,7 +599,7 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
             pattern = r'(\w[\w\d_]*)\((.*)\)$'
             match = re.match(pattern, current_func_name)
             if match:
-                current_func_name =  list(match.groups())[0]
+                current_func_name = list(match.groups())[0]
 
     current_edge = Edge(pre_block, block)
     if current_edge in visited_edges:
@@ -664,20 +680,18 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
         new_params.global_state["pc"] = successor
         sym_exec_block(new_params, successor, block, depth, func_call, current_func_name)
     elif jump_type[block] == "conditional":  # executing "JUMPI"
+        if g_trace is not None:  # if we are in trace replay mode, just choose the real branch
+            branch_expression = vertices[block].get_branch_expression()
 
-        # A choice point, we proceed with depth first search
+            left_branch = vertices[block].get_jump_target()
+            right_branch = vertices[block].get_falls_to()
+            assert left_branch != right_branch and g_trace[-1] in [left_branch, right_branch], \
+                "No branch to go, invalid trace"
 
-        branch_expression = vertices[block].get_branch_expression()
+            solver.push()  # SET A BOUNDARY FOR SOLVER
+            solver.add(branch_expression)
 
-        log.debug("Branch expression: " + str(branch_expression))
-
-        solver.push()  # SET A BOUNDARY FOR SOLVER
-        solver.add(branch_expression)
-
-        try:
-            if solver.check() == unsat:
-                log.debug("INFEASIBLE PATH DETECTED")
-            else:
+            if g_trace[-1] == left_branch:
                 left_branch = vertices[block].get_jump_target()
                 new_params = params.copy()
                 new_params.global_state["pc"] = left_branch
@@ -685,27 +699,14 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
                 last_idx = len(new_params.path_conditions_and_vars["path_condition"]) - 1
                 new_params.analysis["time_dependency_bug"][last_idx] = global_state["pc"]
                 sym_exec_block(new_params, left_branch, block, depth, func_call, current_func_name)
-        except TimeoutError:
-            raise
-        except Exception as e:
-            if global_params.DEBUG_MODE:
-                traceback.print_exc()
 
-        solver.pop()  # POP SOLVER CONTEXT
+            solver.pop()  # POP SOLVER CONTEXT
 
-        solver.push()  # SET A BOUNDARY FOR SOLVER
-        negated_branch_expression = Not(branch_expression)
-        solver.add(negated_branch_expression)
+            solver.push()  # SET A BOUNDARY FOR SOLVER
+            negated_branch_expression = Not(branch_expression)
+            solver.add(negated_branch_expression)
 
-        log.debug("Negated branch expression: " + str(negated_branch_expression))
-
-        try:
-            if solver.check() == unsat:
-                # Note that this check can be optimized. I.e. if the previous check succeeds,
-                # no need to check for the negated condition, but we can immediately go into
-                # the else branch
-                log.debug("INFEASIBLE PATH DETECTED")
-            else:
+            if g_trace[-1] == right_branch:
                 right_branch = vertices[block].get_falls_to()
                 new_params = params.copy()
                 new_params.global_state["pc"] = right_branch
@@ -713,14 +714,67 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
                 last_idx = len(new_params.path_conditions_and_vars["path_condition"]) - 1
                 new_params.analysis["time_dependency_bug"][last_idx] = global_state["pc"]
                 sym_exec_block(new_params, right_branch, block, depth, func_call, current_func_name)
-        except TimeoutError:
-            raise
-        except Exception as e:
-            if global_params.DEBUG_MODE:
-                traceback.print_exc()
-        solver.pop()  # POP SOLVER CONTEXT
-        updated_count_number = visited_edges[current_edge] - 1
-        visited_edges.update({current_edge: updated_count_number})
+
+            solver.pop()  # POP SOLVER CONTEXT
+            updated_count_number = visited_edges[current_edge] - 1
+            visited_edges.update({current_edge: updated_count_number})
+        else:
+            # A choice point, we proceed with depth first search
+
+            branch_expression = vertices[block].get_branch_expression()
+
+            log.debug("Branch expression: " + str(branch_expression))
+
+            solver.push()  # SET A BOUNDARY FOR SOLVER
+            solver.add(branch_expression)
+
+            try:
+                if solver.check() == unsat:
+                    log.debug("INFEASIBLE PATH DETECTED")
+                else:
+                    left_branch = vertices[block].get_jump_target()
+                    new_params = params.copy()
+                    new_params.global_state["pc"] = left_branch
+                    new_params.path_conditions_and_vars["path_condition"].append(branch_expression)
+                    last_idx = len(new_params.path_conditions_and_vars["path_condition"]) - 1
+                    new_params.analysis["time_dependency_bug"][last_idx] = global_state["pc"]
+                    sym_exec_block(new_params, left_branch, block, depth, func_call, current_func_name)
+            except TimeoutError:
+                raise
+            except Exception as e:
+                if global_params.DEBUG_MODE:
+                    traceback.print_exc()
+
+            solver.pop()  # POP SOLVER CONTEXT
+
+            solver.push()  # SET A BOUNDARY FOR SOLVER
+            negated_branch_expression = Not(branch_expression)
+            solver.add(negated_branch_expression)
+
+            log.debug("Negated branch expression: " + str(negated_branch_expression))
+
+            try:
+                if solver.check() == unsat:
+                    # Note that this check can be optimized. I.e. if the previous check succeeds,
+                    # no need to check for the negated condition, but we can immediately go into
+                    # the else branch
+                    log.debug("INFEASIBLE PATH DETECTED")
+                else:
+                    right_branch = vertices[block].get_falls_to()
+                    new_params = params.copy()
+                    new_params.global_state["pc"] = right_branch
+                    new_params.path_conditions_and_vars["path_condition"].append(negated_branch_expression)
+                    last_idx = len(new_params.path_conditions_and_vars["path_condition"]) - 1
+                    new_params.analysis["time_dependency_bug"][last_idx] = global_state["pc"]
+                    sym_exec_block(new_params, right_branch, block, depth, func_call, current_func_name)
+            except TimeoutError:
+                raise
+            except Exception as e:
+                if global_params.DEBUG_MODE:
+                    traceback.print_exc()
+            solver.pop()  # POP SOLVER CONTEXT
+            updated_count_number = visited_edges[current_edge] - 1
+            visited_edges.update({current_edge: updated_count_number})
     else:
         updated_count_number = visited_edges[current_edge] - 1
         visited_edges.update({current_edge: updated_count_number})
@@ -737,6 +791,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     global g_src_map
     global calls_affect_state
     global data_source
+    global g_trace
+    global g_helper
+    global args
 
     stack = params.stack
     mem = params.mem
@@ -749,6 +806,20 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     overflow_pcs = params.overflow_pcs
 
     visited_pcs.add(global_state["pc"])
+
+    if g_trace is not None:
+        if len(g_trace) == 0:  # reach end of given trace
+            print "End of trace:\t" + "============ Results ==========="
+            path_condition = path_conditions_and_vars['path_condition']
+            print simplify(And(*path_condition))
+
+
+            if g_helper is not None:
+                g_helper.rm_tmp_files()
+            exit(0)
+
+        pc = g_trace.pop()
+        assert global_state["pc"] == pc, "{} != {}".format(global_state["pc"], pc)
 
     instr_parts = str.split(instr, ' ')
     opcode = instr_parts[0]
@@ -806,16 +877,19 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if jump_type[block] == 'conditional':
                 jump_target = vertices[block].get_jump_target()
                 falls_to = vertices[block].get_falls_to()
-                check_revert = any([True for instruction in vertices[jump_target].get_instructions() if instruction.startswith('REVERT')])
+                check_revert = any([True for instruction in vertices[jump_target].get_instructions() if
+                                    instruction.startswith('REVERT')])
                 if not check_revert:
-                    check_revert = any([True for instruction in vertices[falls_to].get_instructions() if instruction.startswith('REVERT')])
+                    check_revert = any([True for instruction in vertices[falls_to].get_instructions() if
+                                        instruction.startswith('REVERT')])
 
             if jump_type[block] != 'conditional' or not check_revert:
                 if not isAllReal(computed, first):
                     solver.push()
                     solver.add(UGT(first, computed))
                     if check_sat(solver) == sat:
-                        global_problematic_pcs['integer_overflow'].append(Overflow(global_state['pc'] - 1, solver.model()))
+                        global_problematic_pcs['integer_overflow'].append(
+                            Overflow(global_state['pc'] - 1, solver.model()))
                         overflow_pcs.append(global_state['pc'] - 1)
                     solver.pop()
 
@@ -855,16 +929,19 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if jump_type[block] == 'conditional':
                 jump_target = vertices[block].get_jump_target()
                 falls_to = vertices[block].get_falls_to()
-                check_revert = any([True for instruction in vertices[jump_target].get_instructions() if instruction.startswith('REVERT')])
+                check_revert = any([True for instruction in vertices[jump_target].get_instructions() if
+                                    instruction.startswith('REVERT')])
                 if not check_revert:
-                    check_revert = any([True for instruction in vertices[falls_to].get_instructions() if instruction.startswith('REVERT')])
+                    check_revert = any([True for instruction in vertices[falls_to].get_instructions() if
+                                        instruction.startswith('REVERT')])
 
             if jump_type[block] != 'conditional' or not check_revert:
                 if not isAllReal(first, second):
                     solver.push()
                     solver.add(UGT(second, first))
                     if check_sat(solver) == sat:
-                        global_problematic_pcs['integer_underflow'].append(Underflow(global_state['pc'] - 1, solver.model()))
+                        global_problematic_pcs['integer_underflow'].append(
+                            Underflow(global_state['pc'] - 1, solver.model()))
                     solver.pop()
 
             stack.insert(0, computed)
@@ -886,7 +963,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 first = to_symbolic(first)
                 second = to_symbolic(second)
                 solver.push()
-                solver.add( Not (second == 0) )
+                solver.add(Not(second == 0))
                 if check_sat(solver) == unsat:
                     computed = 0
                 else:
@@ -906,11 +983,11 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 second = to_signed(second)
                 if second == 0:
                     computed = 0
-                elif first == -2**255 and second == -1:
-                    computed = -2**255
+                elif first == -2 ** 255 and second == -1:
+                    computed = -2 ** 255
                 else:
                     sign = -1 if (first / second) < 0 else 1
-                    computed = sign * ( abs(first) / abs(second) )
+                    computed = sign * (abs(first) / abs(second))
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
@@ -920,9 +997,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     computed = 0
                 else:
                     solver.push()
-                    solver.add( Not( And(first == -2**255, second == -1 ) ))
+                    solver.add(Not(And(first == -2 ** 255, second == -1)))
                     if check_sat(solver) == unsat:
-                        computed = -2**255
+                        computed = -2 ** 255
                     else:
                         solver.push()
                         solver.add(first / second < 0)
@@ -993,7 +1070,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 else:
 
                     solver.push()
-                    solver.add(first < 0) # check sign of first element
+                    solver.add(first < 0)  # check sign of first element
                     sign = BitVecVal(-1, 256) if check_sat(solver) == sat \
                         else BitVecVal(1, 256)
                     solver.pop()
@@ -1025,7 +1102,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 first = to_symbolic(first)
                 second = to_symbolic(second)
                 solver.push()
-                solver.add( Not(third == 0) )
+                solver.add(Not(third == 0))
                 if check_sat(solver) == unsat:
                     computed = 0
                 else:
@@ -1055,7 +1132,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 first = to_symbolic(first)
                 second = to_symbolic(second)
                 solver.push()
-                solver.add( Not(third == 0) )
+                solver.add(Not(third == 0))
                 if check_sat(solver) == unsat:
                     computed = 0
                 else:
@@ -1076,7 +1153,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             exponent = stack.pop(0)
             # Type conversion is needed when they are mismatched
             if isAllReal(base, exponent):
-                computed = pow(base, exponent, 2**256)
+                computed = pow(base, exponent, 2 ** 256)
             else:
                 # The computed value is unknown, this is because power is
                 # not supported in bit-vector theory
@@ -1099,12 +1176,12 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     if second & (1 << signbit_index_from_right):
                         computed = second | (2 ** 256 - (1 << signbit_index_from_right))
                     else:
-                        computed = second & ((1 << signbit_index_from_right) - 1 )
+                        computed = second & ((1 << signbit_index_from_right) - 1)
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
                 solver.push()
-                solver.add( Not( Or(first >= 32, first < 0 ) ) )
+                solver.add(Not(Or(first >= 32, first < 0)))
                 if check_sat(solver) == unsat:
                     computed = second
                 else:
@@ -1290,7 +1367,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 first = to_symbolic(first)
                 second = to_symbolic(second)
                 solver.push()
-                solver.add( Not (Or( first >= 32, first < 0 ) ) )
+                solver.add(Not(Or(first >= 32, first < 0)))
                 if check_sat(solver) == unsat:
                     computed = 0
                 else:
@@ -1375,8 +1452,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             position = stack.pop(0)
             if g_src_map:
                 source_code = g_src_map.get_source_code(global_state['pc'] - 1)
-                if source_code.startswith("function") and isReal(position) and current_func_name in g_src_map.func_name_to_params:
-                    params =  g_src_map.func_name_to_params[current_func_name]
+                if source_code.startswith("function") and isReal(
+                        position) and current_func_name in g_src_map.func_name_to_params:
+                    params = g_src_map.func_name_to_params[current_func_name]
                     param_idx = (position - 4) // 32
                     for param in params:
                         if param_idx == param['position']:
@@ -1419,7 +1497,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             evm_file_name = g_disasm_file
         with open(evm_file_name, 'r') as evm_file:
             evm = evm_file.read()[:-1]
-            code_size = len(evm)/2
+            code_size = len(evm) / 2
             stack.insert(0, code_size)
     elif opcode == "CODECOPY":
         if len(stack) > 2:
@@ -1465,7 +1543,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     if check_sat(solver) != unsat:
                         current_miu_i = If(expression, temp, current_miu_i)
                 solver.pop()
-                mem.clear() # very conservative
+                mem.clear()  # very conservative
                 mem[str(mem_location)] = new_var
             global_state["miu_i"] = current_miu_i
         else:
@@ -1492,9 +1570,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             address = stack.pop(0)
             if isReal(address) and global_params.USE_GLOBAL_BLOCKCHAIN:
                 code = data_source.getCode(address)
-                stack.insert(0, len(code)/2)
+                stack.insert(0, len(code) / 2)
             else:
-                #not handled yet
+                # not handled yet
                 new_var_name = gen.gen_code_size_var(address)
                 if new_var_name in path_conditions_and_vars:
                     new_var = path_conditions_and_vars[new_var_name]
@@ -1543,7 +1621,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     if check_sat(solver) != unsat:
                         current_miu_i = If(expression, temp, current_miu_i)
                 solver.pop()
-                mem.clear() # very conservative
+                mem.clear()  # very conservative
                 mem[str(mem_location)] = new_var
             global_state["miu_i"] = current_miu_i
         else:
@@ -1611,7 +1689,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 if MSIZE:
                     if check_sat(solver) != unsat:
                         # this means that it is possibly that current_miu_i < temp
-                        current_miu_i = If(expression,temp,current_miu_i)
+                        current_miu_i = If(expression, temp, current_miu_i)
                 solver.pop()
                 new_var_name = gen.gen_mem_var(address)
                 if new_var_name in path_conditions_and_vars:
@@ -1659,7 +1737,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 if MSIZE:
                     if check_sat(solver) != unsat:
                         # this means that it is possibly that current_miu_i < temp
-                        current_miu_i = If(expression,temp,current_miu_i)
+                        current_miu_i = If(expression, temp, current_miu_i)
                 solver.pop()
                 mem.clear()  # very conservative
                 mem[str(stored_address)] = stored_value
@@ -1691,7 +1769,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 if MSIZE:
                     if check_sat(solver) != unsat:
                         # this means that it is possibly that current_miu_i < temp
-                        current_miu_i = If(expression,temp,current_miu_i)
+                        current_miu_i = If(expression, temp, current_miu_i)
                 solver.pop()
                 mem.clear()  # very conservative
                 mem[str(stored_address)] = stored_value
@@ -1819,7 +1897,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         global_state["pc"] = global_state["pc"] + 1 + position
         pushed_value = int(instr_parts[1], 16)
         stack.insert(0, pushed_value)
-        if global_params.UNIT_TEST == 3: # test evm symbolic
+        if global_params.UNIT_TEST == 3:  # test evm symbolic
             stack[0] = BitVecVal(stack[0], 256)
     #
     #  80s: Duplication Operations
@@ -1891,7 +1969,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
 
             if isReal(transfer_amount):
                 if transfer_amount == 0:
-                    stack.insert(0, 1)   # x = 0
+                    stack.insert(0, 1)  # x = 0
                     return
 
             # Let us ignore the call depth
@@ -1903,10 +1981,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if check_sat(solver) == unsat:
                 # this means not enough fund, thus the execution will result in exception
                 solver.pop()
-                stack.insert(0, 0)   # x = 0
+                stack.insert(0, 0)  # x = 0
             else:
                 # the execution is possibly okay
-                stack.insert(0, 1)   # x = 1
+                stack.insert(0, 1)  # x = 1
                 solver.pop()
                 solver.add(is_enough_fund)
                 path_conditions_and_vars["path_condition"].append(is_enough_fund)
@@ -1948,7 +2026,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     calls_affect_state[call_pc] = False
             global_state["pc"] = global_state["pc"] + 1
             outgas = stack.pop(0)
-            recipient = stack.pop(0) # this is not used as recipient
+            recipient = stack.pop(0)  # this is not used as recipient
             if global_params.USE_GLOBAL_STORAGE:
                 if isReal(recipient):
                     recipient = hex(recipient)
@@ -1968,7 +2046,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
 
             if isReal(transfer_amount):
                 if transfer_amount == 0:
-                    stack.insert(0, 1)   # x = 0
+                    stack.insert(0, 1)  # x = 0
                     return
 
             # Let us ignore the call depth
@@ -1980,10 +2058,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if check_sat(solver) == unsat:
                 # this means not enough fund, thus the execution will result in exception
                 solver.pop()
-                stack.insert(0, 0)   # x = 0
+                stack.insert(0, 0)  # x = 0
             else:
                 # the execution is possibly okay
-                stack.insert(0, 1)   # x = 1
+                stack.insert(0, 1)  # x = 1
                 solver.pop()
                 solver.add(is_enough_fund)
                 path_conditions_and_vars["path_condition"].append(is_enough_fund)
@@ -2053,6 +2131,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             exit(UNKNOWN_INSTRUCTION)
         raise Exception('UNKNOWN INSTRUCTION: ' + opcode)
 
+
 # Detect if a money flow depends on the timestamp
 def detect_time_dependency():
     global results
@@ -2083,7 +2162,7 @@ def detect_time_dependency():
     log.info('\t  Timestamp Dependency: \t\t %s', time_dependency.is_vulnerable())
 
     if global_params.REPORT_MODE:
-        file_name = g_disasm_file.split("/")[len(g_disasm_file.split("/"))-1].split(".")[0]
+        file_name = g_disasm_file.split("/")[len(g_disasm_file.split("/")) - 1].split(".")[0]
         report_file = file_name + '.report'
         with open(report_file, 'w') as rfile:
             if is_dependant:
@@ -2115,13 +2194,13 @@ def detect_money_concurrency():
             if len(jflow) == 1:
                 continue
             if is_diff(flow, jflow):
-                flows.append(global_problematic_pcs["money_concurrency_bug"][i-1])
+                flows.append(global_problematic_pcs["money_concurrency_bug"][i - 1])
                 flows.append(global_problematic_pcs["money_concurrency_bug"][j])
-                concurrency_paths.append([i-1, j])
+                concurrency_paths.append([i - 1, j])
                 if global_params.CHECK_CONCURRENCY_FP and \
-                        is_false_positive(i-1, j, all_gs, path_conditions) and \
-                        is_false_positive(j, i-1, all_gs, path_conditions):
-                    false_positive.append([i-1, j])
+                        is_false_positive(i - 1, j, all_gs, path_conditions) and \
+                        is_false_positive(j, i - 1, all_gs, path_conditions):
+                    false_positive.append([i - 1, j])
                 break
         if flows:
             break
@@ -2146,6 +2225,7 @@ def detect_money_concurrency():
         # all the races
         rfile.write(str(concurrency_paths) + "\n")
 
+
 def detect_parity_multisig_bug_2():
     global g_src_map
     global results
@@ -2157,6 +2237,7 @@ def detect_parity_multisig_bug_2():
     s = "\t  Parity Multisig Bug 2: \t\t %s" % parity_multisig_bug_2.is_vulnerable()
     log.info(s)
 
+
 def check_callstack_attack(disasm):
     problematic_instructions = ['CALL', 'CALLCODE']
     pcs = []
@@ -2165,10 +2246,10 @@ def check_callstack_attack(disasm):
         if instruction[1] in problematic_instructions:
             try:
                 pc = int(instruction[0])
-                if not disasm[i+1][1] == 'SWAP':
+                if not disasm[i + 1][1] == 'SWAP':
                     continue
-                swap_num = int(disasm[i+1][2])
-                if not all(disasm[i+j+2][1] == 'POP' for j in range(swap_num)):
+                swap_num = int(disasm[i + 1][2])
+                if not all(disasm[i + j + 2][1] == 'POP' for j in range(swap_num)):
                     continue
             except IndexError:
                 continue
@@ -2178,10 +2259,10 @@ def check_callstack_attack(disasm):
                 opcode2 = disasm[i + swap_num + 3][1]
                 opcode3 = disasm[i + swap_num + 4][1]
                 if opcode1 == "ISZERO" \
-                    or opcode1 == "DUP" and opcode2 == "ISZERO" \
-                    or opcode1 == "JUMPDEST" and opcode2 == "ISZERO" \
-                    or opcode1 == "JUMPDEST" and opcode2 == "DUP" and opcode3 == "ISZERO":
-                        pass
+                        or opcode1 == "DUP" and opcode2 == "ISZERO" \
+                        or opcode1 == "JUMPDEST" and opcode2 == "ISZERO" \
+                        or opcode1 == "JUMPDEST" and opcode2 == "DUP" and opcode3 == "ISZERO":
+                    pass
                 else:
                     pcs.append(pc)
             except IndexError:
@@ -2208,6 +2289,7 @@ def detect_callstack_attack():
         results['vulnerabilities']['callstack'] = callstack.is_vulnerable()
     log.info('\t  Callstack Depth Attack Vulnerability:  %s', callstack.is_vulnerable())
 
+
 def detect_reentrancy():
     global g_src_map
     global results
@@ -2222,6 +2304,7 @@ def detect_reentrancy():
         results['vulnerabilities']['reentrancy'] = reentrancy.is_vulnerable()
     log.info("\t  Re-Entrancy Vulnerability: \t\t %s", reentrancy.is_vulnerable())
 
+
 def detect_integer_underflow():
     global integer_underflow
 
@@ -2232,6 +2315,7 @@ def detect_integer_underflow():
     else:
         results['vulnerabilities']['integer_underflow'] = integer_underflow.is_vulnerable()
     log.info('\t  Integer Underflow: \t\t\t %s', integer_underflow.is_vulnerable())
+
 
 def detect_integer_overflow():
     global integer_overflow
@@ -2248,6 +2332,7 @@ def detect_integer_overflow():
         results['vulnerabilities']['integer_overflow'] = integer_overflow.is_vulnerable()
     log.info('\t  Integer Overflow: \t\t\t %s', integer_overflow.is_vulnerable())
 
+
 def detect_assertion_failure():
     global g_src_map
     global results
@@ -2258,6 +2343,7 @@ def detect_assertion_failure():
     results['vulnerabilities']['assertion_failure'] = assertion_failure.get_warnings()
     s = "\t  Assertion Failure: \t\t\t %s" % assertion_failure.is_vulnerable()
     log.info(s)
+
 
 def detect_vulnerabilities():
     global results
@@ -2287,7 +2373,7 @@ def detect_vulnerabilities():
 
         stop = time.time()
         if global_params.REPORT_MODE:
-            rfile.write(str(stop-begin))
+            rfile.write(str(stop - begin))
             rfile.close()
 
         log.debug("Results for Reentrancy Bug: " + str(reentrancy_all_paths))
@@ -2314,6 +2400,7 @@ def detect_vulnerabilities():
 
     return results, vulnerability_found()
 
+
 def log_info():
     global g_src_map
     global time_dependency
@@ -2333,6 +2420,7 @@ def log_info():
         s = str(vul)
         if s:
             log.info(s)
+
 
 def vulnerability_found():
     global g_src_map
@@ -2354,6 +2442,7 @@ def vulnerability_found():
             return 1
     return 0
 
+
 def closing_message():
     global g_disasm_file
     global results
@@ -2365,28 +2454,32 @@ def closing_message():
             of.write(json.dumps(results, indent=1))
         log.info("Wrote results to %s.", result_file)
 
+
 class TimeoutError(Exception):
     pass
 
+
 class Timeout:
-   """Timeout class using ALARM signal."""
+    """Timeout class using ALARM signal."""
 
-   def __init__(self, sec=10, error_message=os.strerror(errno.ETIME)):
-       self.sec = sec
-       self.error_message = error_message
+    def __init__(self, sec=10, error_message=os.strerror(errno.ETIME)):
+        self.sec = sec
+        self.error_message = error_message
 
-   def __enter__(self):
-       signal.signal(signal.SIGALRM, self._handle_timeout)
-       signal.alarm(self.sec)
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, self._handle_timeout)
+        signal.alarm(self.sec)
 
-   def __exit__(self, *args):
-       signal.alarm(0)    # disable alarm
+    def __exit__(self, *args):
+        signal.alarm(0)  # disable alarm
 
-   def _handle_timeout(self, signum, frame):
-       raise TimeoutError(self.error_message)
+    def _handle_timeout(self, signum, frame):
+        raise TimeoutError(self.error_message)
+
 
 def do_nothing():
     pass
+
 
 def run_build_cfg_and_analyze(timeout_cb=do_nothing):
     initGlobalVars()
@@ -2399,6 +2492,7 @@ def run_build_cfg_and_analyze(timeout_cb=do_nothing):
     except TimeoutError:
         g_timeout = True
         timeout_cb()
+
 
 def get_recipients(disasm_file, contract_address):
     global recipients
@@ -2423,6 +2517,7 @@ def get_recipients(disasm_file, contract_address):
         'timeout': g_timeout
     }
 
+
 def test():
     global_params.GLOBAL_TIMEOUT = global_params.GLOBAL_TIMEOUT_TEST
 
@@ -2432,6 +2527,7 @@ def test():
 
     run_build_cfg_and_analyze(timeout_cb=timeout_cb)
 
+
 def analyze():
     def timeout_cb():
         if global_params.DEBUG_MODE:
@@ -2439,15 +2535,21 @@ def analyze():
 
     run_build_cfg_and_analyze(timeout_cb=timeout_cb)
 
-def run(disasm_file=None, source_file=None, source_map=None):
+
+# modify to accept specific guided trace file
+def run(disasm_file=None, source_file=None, source_map=None, trace=None, helper=None):
     global g_disasm_file
     global g_source_file
     global g_src_map
+    global g_trace
+    global g_helper
     global results
 
     g_disasm_file = disasm_file
     g_source_file = source_file
     g_src_map = source_map
+    g_trace = trace
+    g_helper = helper
 
     if is_testing_evm():
         test()
