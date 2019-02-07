@@ -7,7 +7,7 @@
 
 .DS_Store
 
-.idea/dist/
+.idea/*
 
 contract_data
 dist/
@@ -20,3 +20,6 @@ bytecode.1
 
 !oyente/tests/contracts/*/*
 web/vendor/
+
+oyente/result
+oyente/test_traces

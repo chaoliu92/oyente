@@ -5,7 +5,8 @@ class BasicBlock:
         self.start = start_address
         self.end = end_address
         self.instructions = []  # each instruction is a string
-        self.jump_target = 0
+        self.jump_target = [0]  # change from 0
+        self.branch_expression = []  # added
 
     def get_start_address(self):
         return self.start
@@ -33,18 +34,18 @@ class BasicBlock:
 
     def set_jump_target(self, address):
         if isinstance(address, six.integer_types):
-            self.jump_target = address
+            self.jump_target.append(address)
         else:
-            self.jump_target = -1
+            self.jump_target.append(-1)
 
     def get_jump_target(self):
-        return self.jump_target
+        return self.jump_target[-1]
 
     def set_branch_expression(self, branch):
-        self.branch_expression = branch
+        self.branch_expression.append(branch)
 
     def get_branch_expression(self):
-        return self.branch_expression
+        return self.branch_expression[-1]
 
     def display(self):
         six.print_("================")
