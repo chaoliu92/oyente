@@ -393,13 +393,13 @@ def get_init_global_state(path_conditions_and_vars, path_condition_origins):
 
     constraint = (deposited_value >= BitVecVal(0, 256))
     path_conditions_and_vars["path_condition"].append(constraint)
-    path_condition_origins.append('Initial')  # initial "PC" for this constraint
+    path_condition_origins.append(('Initial', ''))  # initial "PC" for this constraint
     constraint = (init_is >= deposited_value)
     path_conditions_and_vars["path_condition"].append(constraint)
-    path_condition_origins.append('Initial')  # initial "PC" for this constraint
+    path_condition_origins.append(('Initial', ''))  # initial "PC" for this constraint
     constraint = (init_ia >= BitVecVal(0, 256))
     path_conditions_and_vars["path_condition"].append(constraint)
-    path_condition_origins.append('Initial')  # initial "PC" for this constraint
+    path_condition_origins.append(('Initial', ''))  # initial "PC" for this constraint
 
     # update the balances of the "caller" and "callee"
 
@@ -507,7 +507,7 @@ def print_path_condition_and_vars(params):
     print ""
     print "============ Variable Origins ==========="
     for k in var_origins:
-        print "{}{}: {}".format(" " * 4, k, var_origins[k])
+        print "{}{}: {}, PC={}".format(" " * 4, k, var_origins[k][0], var_origins[k][1])
 
     # print mem
     # print memory
@@ -937,7 +937,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 # The computed value is unknown, this is because power is
                 # not supported in bit-vector theory
                 new_var_name = gen.gen_arbitrary_var()
-                var_origins[new_var_name] = "EXP({}, {})".format(str(base), str(exponent))  # mark origin
+                var_origins[new_var_name] = ("EXP({}, {})".format(str(base), str(exponent)), global_state["pc"] - 1)  # mark origin
 
                 computed = BitVec(new_var_name, 256)
             computed = simplify(computed) if is_expr(computed) else computed
@@ -1199,9 +1199,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                         elif long(word) in mem:  # in case we have long type address other than int type
                             sha3_input.append(str(mem[long(word)]))
                         else:
-                            raise NotImplementedError(word, mem)
+                            sha3_input.append(str(BitVecVal(0, 256)))  # memory initialized to all zero
+                            # raise NotImplementedError(word, mem)
                         word += 32
-                    var_origins[new_var_name] = "SHA3({})".format(", ".join(sha3_input))
+                    var_origins[new_var_name] = ("SHA3({})".format(", ".join(sha3_input)), global_state["pc"] - 1)
 
                     new_var = BitVec(new_var_name, 256)
                     sha3_list[position] = new_var
@@ -1209,7 +1210,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 # push into the execution a fresh symbolic variable
                 new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
-                var_origins[new_var_name] = "SHA3(mem[{}, {}])".format(str(s0), str(s0 + s1))
+                var_origins[new_var_name] = ("SHA3(mem[{}, {}])".format(str(s0), str(s0 + s1)), global_state["pc"] - 1)
 
                 new_var = BitVec(new_var_name, 256)
                 path_conditions_and_vars[new_var_name] = new_var
@@ -1331,12 +1332,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 temp = ((mem_location + no_bytes) / 32) + 1
                 current_miu_i = to_symbolic(current_miu_i)
                 expression = current_miu_i < temp
-                solver.push()
-                solver.add(expression)
-                if check_sat(solver) != unsat:
-                    current_miu_i = If(expression, temp, current_miu_i)
-                solver.pop()
+                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
+                print '{}: PC={}'.format('CODECOPY', global_state["pc"] - 1)
                 mem[str(mem_location)] = new_var
             global_state["miu_i"] = current_miu_i
         else:
@@ -1353,7 +1351,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     elif opcode == "RETURNDATASIZE":
         global_state["pc"] += 1
         new_var_name = gen.gen_arbitrary_var()  # not precise, can change name to return_data
-        var_origins[new_var_name] = "RETURNDATASIZE()"  # miss stack depth and call position
+        var_origins[new_var_name] = ("RETURNDATASIZE()", global_state["pc"] - 1)  # miss stack depth and call position
 
         new_var = BitVec(new_var_name, 256)
         stack.insert(0, new_var)
@@ -1411,12 +1409,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 temp = ((mem_location + no_bytes) / 32) + 1
                 current_miu_i = to_symbolic(current_miu_i)
                 expression = current_miu_i < temp
-                solver.push()
-                solver.add(expression)
-                if check_sat(solver) != unsat:
-                    current_miu_i = If(expression, temp, current_miu_i)
-                solver.pop()
+                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
+                print '{}: PC={}'.format('EXTCODECOPY', global_state["pc"] - 1)
                 mem[str(mem_location)] = new_var
             global_state["miu_i"] = current_miu_i
         else:
@@ -1483,12 +1478,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 temp = ((address + 31) / 32) + 1
                 current_miu_i = to_symbolic(current_miu_i)
                 expression = current_miu_i < temp
-                solver.push()
-                solver.add(expression)
-                if check_sat(solver) != unsat:
-                    # this means that it is possibly that current_miu_i < temp
-                    current_miu_i = If(expression, temp, current_miu_i)
-                solver.pop()
+                current_miu_i = If(expression, temp, current_miu_i)
                 new_var_name = gen.gen_mem_var(address)
                 if new_var_name in path_conditions_and_vars:
                     new_var = path_conditions_and_vars[new_var_name]
@@ -1530,13 +1520,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 temp = ((stored_address + 31) / 32) + 1
                 expression = current_miu_i < temp
-                solver.push()
-                solver.add(expression)
-                if check_sat(solver) != unsat:
-                    # this means that it is possibly that current_miu_i < temp
-                    current_miu_i = If(expression, temp, current_miu_i)
-                solver.pop()
+                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
+                print '{}: PC={}, stored_address={}, current_miu_i={}'.format('MSTORE', global_state["pc"] - 1, stored_address, current_miu_i)
                 mem[str(stored_address)] = stored_value
             global_state["miu_i"] = current_miu_i
         else:
@@ -1561,13 +1547,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 if isReal(current_miu_i):
                     current_miu_i = BitVecVal(current_miu_i, 256)
                 expression = current_miu_i < temp
-                solver.push()
-                solver.add(expression)
-                if check_sat(solver) != unsat:
-                    # this means that it is possibly that current_miu_i < temp
-                    current_miu_i = If(expression, temp, current_miu_i)
-                solver.pop()
+                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
+                print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
                 mem[str(stored_address)] = stored_value
             global_state["miu_i"] = current_miu_i
         else:
@@ -1728,7 +1710,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             offset = stack.pop(0)
             length = stack.pop(0)
             new_var_name = gen.gen_arbitrary_var()
-            var_origins[new_var_name] = "CREATE({}, mem[{}, {}])".format(str(value), str(offset), str(length))
+            var_origins[new_var_name] = ("CREATE({}, mem[{}, {}])".format(str(value), str(offset), str(length)), global_state["pc"] - 1)
 
             new_var = BitVec(new_var_name, 256)
             stack.insert(0, new_var)  # this operation can fail
@@ -1791,10 +1773,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                         new_address_name = "concrete_address_" + str(recipient)
                     else:
                         new_address_name = gen.gen_arbitrary_address_var()
-                        var_origins[new_address_name] = "ADDRESS({})".format(str(recipient))
+                        var_origins[new_address_name] = ("ADDRESS({})".format(str(recipient)), global_state["pc"] - 1)
                         
                     old_balance_name = gen.gen_arbitrary_var()
-                    var_origins[old_balance_name] = "BALANCE({})".format(str(recipient))
+                    var_origins[old_balance_name] = ("BALANCE({})".format(str(recipient)), global_state["pc"] - 1)
 
                     old_balance = BitVec(old_balance_name, 256)  # balance for the callee before this CALL
                     path_conditions_and_vars[old_balance_name] = old_balance
@@ -1878,9 +1860,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             size_data_ouput = stack.pop(0)
 
             new_var_name = gen.gen_arbitrary_var()
-            var_origins[new_var_name] = "{}({}, {}, {}, {}, {}, {})".\
+            var_origins[new_var_name] = ("{}({}, {}, {}, {}, {}, {})".\
                 format(opcode, str(outgas), str(recipient), str(start_data_input), str(size_data_input),
-                       str(start_data_output), str(size_data_ouput))
+                       str(start_data_output), str(size_data_ouput)), global_state["pc"] - 1)
 
             new_var = BitVec(new_var_name, 256)
             stack.insert(0, new_var)  # so these two operations can fail
@@ -1907,10 +1889,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             new_address_name = "concrete_address_" + str(recipient)
         else:
             new_address_name = gen.gen_arbitrary_address_var()
-            var_origins[new_address_name] = "ADDRESS({})".format(str(recipient))
+            var_origins[new_address_name] = ("ADDRESS({})".format(str(recipient)), global_state["pc"] - 1)
 
         old_balance_name = gen.gen_arbitrary_var()
-        var_origins[old_balance_name] = "BALANCE({})".format(str(recipient))
+        var_origins[old_balance_name] = ("BALANCE({})".format(str(recipient)), global_state["pc"] - 1)
 
         old_balance = BitVec(old_balance_name, 256)  # balance for beneficial address before this SUICIDE
         path_conditions_and_vars[old_balance_name] = old_balance
