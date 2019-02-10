@@ -108,13 +108,14 @@ def on_test_traces(index, test_traces, result_dir):
     result_file.close()
 
 
-def show_results(index, result_dir, seq_num, num_cases=1):
+def show_results(index, result_dir, seq_num, num_cases=1, only_exception=False):
     """
 
     :param index:
     :param result_dir:
     :param seq_num:
     :param num_cases: show multiple instances at one time
+    :param only_exception: only show exceptional results
     :return:
     """
     trace_doc_pattern = re.compile(r'^trace_doc_((\d+)_(\d+))$')
@@ -124,6 +125,8 @@ def show_results(index, result_dir, seq_num, num_cases=1):
     result_list = sorted(result_list, key=lambda r: int(trace_doc_pattern.match(r['trace']).group(3)))
     result_list = [result for result in result_list
                    if int(trace_doc_pattern.match(result['trace']).group(3)) >= seq_num]
+    if only_exception:
+        result_list = [result for result in result_list if not result['succeed']]
 
     show_more = True
     current_pos = 0
@@ -170,4 +173,6 @@ if __name__ == '__main__':
     # on_test_traces(8, 'test_traces', 'result')
     # on_test_traces(9, 'test_traces', 'result')
 
-    show_results(0, 'result', 102)
+    # show_results(0, 'result', 151, num_cases=1, only_exception=False)
+    # show_results(1, 'result', 0, num_cases=1, only_exception=True)
+    show_results(2, 'result', 0, num_cases=1, only_exception=True)

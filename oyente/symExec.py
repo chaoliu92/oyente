@@ -580,6 +580,9 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
     visited.append(block)
     depth += 1
 
+    if len(g_trace) == 0:  # Reach end of this trace
+        print_path_condition_and_vars(params)
+
     # Go to next Basic Block(s)
     if jump_type[block] == "terminal" or depth > global_params.DEPTH_LIMIT:
         global total_no_of_paths
@@ -671,6 +674,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     elif opcode == "ASSERTFAIL":
         return
 
+    print 'PC={}, opcode={}'.format(g_trace[0], opcode)
 
     # print 'PC={}, current_miu_i={}'.format(global_state['pc'], global_state["miu_i"])
 
@@ -1335,6 +1339,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         else:
             raise ValueError('STACK underflow')
     elif opcode == "CODESIZE":
+        global_state["pc"] = global_state["pc"] + 1
+
         if g_disasm_file.endswith('.disasm'):
             evm_file_name = g_disasm_file[:-7]
         else:
@@ -1363,7 +1369,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     start = code_from * 2
                     end = start + no_bytes * 2
                     code = evm[start: end]
-                mem[mem_location] = int(code, 16)  # memory modeled as a dict
+
+                mem[mem_location] = code  # memory modeled as a dict
             else:
                 new_var_name = gen.gen_code_var("Ia", code_from, no_bytes)
                 if new_var_name in path_conditions_and_vars:
