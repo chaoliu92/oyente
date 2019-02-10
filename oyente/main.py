@@ -108,11 +108,12 @@ def on_test_traces(index, test_traces, result_dir):
     result_file.close()
 
 
-def show_results(index, result_dir, num_cases=1):
+def show_results(index, result_dir, seq_num, num_cases=1):
     """
 
     :param index:
     :param result_dir:
+    :param seq_num:
     :param num_cases: show multiple instances at one time
     :return:
     """
@@ -121,6 +122,8 @@ def show_results(index, result_dir, num_cases=1):
     with open(os.path.join(result_dir, str(index))) as f:
         result_list = [json.loads(line) for line in f]
     result_list = sorted(result_list, key=lambda r: int(trace_doc_pattern.match(r['trace']).group(3)))
+    result_list = [result for result in result_list
+                   if int(trace_doc_pattern.match(result['trace']).group(3)) >= seq_num]
 
     show_more = True
     current_pos = 0
@@ -167,4 +170,4 @@ if __name__ == '__main__':
     # on_test_traces(8, 'test_traces', 'result')
     # on_test_traces(9, 'test_traces', 'result')
 
-    show_results(0, 'result')
+    show_results(0, 'result', 102)

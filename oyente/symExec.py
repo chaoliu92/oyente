@@ -444,6 +444,7 @@ def get_init_global_state(path_conditions_and_vars, path_condition_origins):
     # the state of the current contract
     if "Ia" not in global_state:
         global_state["Ia"] = {}
+    # global_state["miu_i"] = BitVec('Miu_i', 256)  # previous value is 0, here we do not model miu_i, so let it be a var
     global_state["miu_i"] = 0
     global_state["value"] = deposited_value
     global_state["sender_address"] = sender_address
@@ -670,6 +671,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     elif opcode == "ASSERTFAIL":
         return
 
+
+    # print 'PC={}, current_miu_i={}'.format(global_state['pc'], global_state["miu_i"])
+
     #
     #  0s: Stop and Arithmetic Operations
     #
@@ -705,6 +709,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 first = BitVecVal(first, 256)
             elif isSymbolic(first) and isReal(second):
                 second = BitVecVal(second, 256)
+
+            # print 'PC={}, first={}, second={}'.format(global_state['pc'] - 1, first, second)
+
             computed = first * second & UNSIGNED_BOUND_NUMBER
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
@@ -1174,6 +1181,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             s0 = stack.pop(0)
             s1 = stack.pop(0)
             if isAllReal(s0, s1):
+                assert s0 % 32 == 0 and s1 % 32 == 0, 'Memory location not aligned: {}, {}, PC={}, SHA3'. \
+                    format(s0, s1, global_state['pc'] - 1)
+
                 # simulate the hashing of sha3, use an arbitrary function
                 data = [str(x) for x in memory[s0: s0 + s1]]
                 position = ''.join(data)  # convert byte (char) list to a complete str
@@ -1191,7 +1201,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     first_word = int(math.floor(float(s0) / 32))
                     last_word = int(math.floor((float(s0) + s1 - 1) / 32))
                     assert first_word <= last_word, \
-                        "SHA3: {}, {}; Wrong word index: {} > {}".format(s0, s1, first_word, last_word)
+                        "SHA3: {}, {}; Wrong word index: {} > {}, PC={}".\
+                            format(s0, s1, first_word, last_word, global_state['pc'] - 1)
                     word = first_word * 32
                     while word <= last_word * 32:  # iterate through each input word
                         if word in mem:  # type(word) = int
@@ -1202,7 +1213,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                             sha3_input.append(str(BitVecVal(0, 256)))  # memory initialized to all zero
                             # raise NotImplementedError(word, mem)
                         word += 32
-                    var_origins[new_var_name] = ("SHA3({})".format(", ".join(sha3_input)), global_state["pc"] - 1)
+                    var_origins[new_var_name] = ("SHA3({})".format("; ".join(sha3_input)), global_state["pc"] - 1)
 
                     new_var = BitVec(new_var_name, 256)
                     sha3_list[position] = new_var
@@ -1210,7 +1221,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 # push into the execution a fresh symbolic variable
                 new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
-                var_origins[new_var_name] = ("SHA3(mem[{}, {}])".format(str(s0), str(s0 + s1)), global_state["pc"] - 1)
+                var_origins[new_var_name] = ("SHA3(mem[{}: {}])".format(str(s0), str(s0 + s1)), global_state["pc"] - 1)
 
                 new_var = BitVec(new_var_name, 256)
                 path_conditions_and_vars[new_var_name] = new_var
@@ -1258,12 +1269,16 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         if len(stack) > 0:
             global_state["pc"] = global_state["pc"] + 1
             position = stack.pop(0)
-            new_var_name = gen.gen_data_var(position)
+            new_var_name = gen.gen_data_var(position, 32)  # refer to 1 word of data
             if new_var_name in path_conditions_and_vars:
                 new_var = path_conditions_and_vars[new_var_name]
             else:
                 new_var = BitVec(new_var_name, 256)
                 path_conditions_and_vars[new_var_name] = new_var
+
+            # print 'PC={}, position={}'.format(global_state['pc'] - 1, position)
+            # print new_var_name
+
             stack.insert(0, new_var)
         else:
             raise ValueError('STACK underflow')
@@ -1280,9 +1295,43 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         #  TODO: Don't know how to simulate this yet
         if len(stack) > 2:
             global_state["pc"] = global_state["pc"] + 1
-            stack.pop(0)
-            stack.pop(0)
-            stack.pop(0)
+            mem_location = stack.pop(0)
+            calldata_from = stack.pop(0)
+            no_bytes = stack.pop(0)
+
+            if isAllReal(mem_location, calldata_from, no_bytes):
+                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CALLDATACOPY'.\
+                    format(mem_location, global_state['pc'] - 1)
+
+                # first and last word (32 bytes) in memory that is to load (inclusive)
+                first_word = int(math.floor(float(mem_location) / 32))
+                last_word = int(math.floor((float(mem_location) + no_bytes - 1) / 32))
+                assert first_word <= last_word, \
+                    "CALLDATACOPY: {}, {}; Wrong word index: {} > {}, PC={}".\
+                        format(mem_location, no_bytes, first_word, last_word, global_state['pc'] - 1)
+
+                word = first_word
+                while word <= last_word:  # iterate through each memory word
+                    new_var_name = gen.gen_data_var(calldata_from, 32)  # one word by word
+                    if new_var_name in path_conditions_and_vars:
+                        new_var = path_conditions_and_vars[new_var_name]
+                    else:
+                        new_var = BitVec(new_var_name, 256)
+                        path_conditions_and_vars[new_var_name] = new_var
+                    mem[word] = new_var
+
+                    word += 1
+                    calldata_from += 32  # move forward 32 bytes (1 word)
+            elif isReal(mem_location):
+                new_var_name = gen.gen_data_var(calldata_from, no_bytes)
+                if new_var_name in path_conditions_and_vars:
+                    new_var = path_conditions_and_vars[new_var_name]
+                else:
+                    new_var = BitVec(new_var_name, 256)  # modeled as a 256 bits variable, not precise
+                    path_conditions_and_vars[new_var_name] = new_var
+                mem[mem_location] = new_var
+            else:
+                raise NotImplementedError
         else:
             raise ValueError('STACK underflow')
     elif opcode == "CODESIZE":
@@ -1300,16 +1349,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             mem_location = stack.pop(0)
             code_from = stack.pop(0)
             no_bytes = stack.pop(0)
-            current_miu_i = global_state["miu_i"]
 
-            if isAllReal(mem_location, current_miu_i, code_from, no_bytes):
-                if six.PY2:
-                    temp = long(math.ceil((mem_location + no_bytes) / float(32)))
-                else:
-                    temp = int(math.ceil((mem_location + no_bytes) / float(32)))
-
-                if temp > current_miu_i:
-                    current_miu_i = temp
+            if isAllReal(mem_location, code_from, no_bytes):
+                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CODECOPY'. \
+                    format(mem_location, global_state['pc'] - 1)
 
                 if g_disasm_file.endswith('.disasm'):
                     evm_file_name = g_disasm_file[:-7]
@@ -1329,14 +1372,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     new_var = BitVec(new_var_name, 256)  # this may not be 256 bits, too naive
                     path_conditions_and_vars[new_var_name] = new_var
 
-                temp = ((mem_location + no_bytes) / 32) + 1
-                current_miu_i = to_symbolic(current_miu_i)
-                expression = current_miu_i < temp
-                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
-                print '{}: PC={}'.format('CODECOPY', global_state["pc"] - 1)
+                # print '{}: PC={}'.format('CODECOPY', global_state["pc"] - 1)
                 mem[str(mem_location)] = new_var
-            global_state["miu_i"] = current_miu_i
         else:
             raise ValueError('STACK underflow')
     elif opcode == "RETURNDATACOPY":
@@ -1383,15 +1421,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             mem_location = stack.pop(0)
             code_from = stack.pop(0)
             no_bytes = stack.pop(0)
-            current_miu_i = global_state["miu_i"]
 
-            if isAllReal(address, mem_location, current_miu_i, code_from, no_bytes) and USE_GLOBAL_BLOCKCHAIN:
-                if six.PY2:
-                    temp = long(math.ceil((mem_location + no_bytes) / float(32)))
-                else:
-                    temp = int(math.ceil((mem_location + no_bytes) / float(32)))
-                if temp > current_miu_i:
-                    current_miu_i = temp
+            if isAllReal(address, mem_location, code_from, no_bytes) and USE_GLOBAL_BLOCKCHAIN:
+                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, EXTCODECOPY'. \
+                    format(mem_location, global_state['pc'] - 1)
 
                 evm = data_source.getCode(address)
                 start = code_from * 2
@@ -1406,14 +1439,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     new_var = BitVec(new_var_name, 256)  # may not be 256 bits, too naive
                     path_conditions_and_vars[new_var_name] = new_var
 
-                temp = ((mem_location + no_bytes) / 32) + 1
-                current_miu_i = to_symbolic(current_miu_i)
-                expression = current_miu_i < temp
-                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
-                print '{}: PC={}'.format('EXTCODECOPY', global_state["pc"] - 1)
+                # print '{}: PC={}'.format('EXTCODECOPY', global_state["pc"] - 1)
                 mem[str(mem_location)] = new_var
-            global_state["miu_i"] = current_miu_i
         else:
             raise ValueError('STACK underflow')
     elif opcode == "RETURNDATASIZE":
@@ -1464,21 +1492,16 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         if len(stack) > 0:
             global_state["pc"] = global_state["pc"] + 1
             address = stack.pop(0)
-            current_miu_i = global_state["miu_i"]
-            if isAllReal(address, current_miu_i) and address in mem:
-                if six.PY2:
-                    temp = long(math.ceil((address + 32) / float(32)))
-                else:
-                    temp = int(math.ceil((address + 32) / float(32)))
-                if temp > current_miu_i:
-                    current_miu_i = temp
+
+            if isAllReal(address) and address in mem:
+                assert address % 32 == 0, 'Memory location not aligned: {}, PC={}, MLOAD'. \
+                    format(address, global_state['pc'] - 1)
+
                 value = mem[address]
                 stack.insert(0, value)
             else:
-                temp = ((address + 31) / 32) + 1
-                current_miu_i = to_symbolic(current_miu_i)
-                expression = current_miu_i < temp
-                current_miu_i = If(expression, temp, current_miu_i)
+                # print '{}, PC={}, mem={}'.format('MLOAD', global_state['pc'] - 1, mem)
+
                 new_var_name = gen.gen_mem_var(address)
                 if new_var_name in path_conditions_and_vars:
                     new_var = path_conditions_and_vars[new_var_name]
@@ -1490,7 +1513,6 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     mem[address] = new_var
                 else:
                     mem[str(address)] = new_var
-            global_state["miu_i"] = current_miu_i
         else:
             raise ValueError('STACK underflow')
     elif opcode == "MSTORE":
@@ -1498,7 +1520,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             global_state["pc"] = global_state["pc"] + 1
             stored_address = stack.pop(0)
             stored_value = stack.pop(0)
-            current_miu_i = global_state["miu_i"]
+
             if isReal(stored_address):
                 # preparing data for hashing later
                 old_size = len(memory) // 32
@@ -1509,22 +1531,15 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 for i in range(31, -1, -1):  # 31, 30, ..., 1, 0
                     memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
                     value /= 256
-            if isAllReal(stored_address, current_miu_i):
-                if six.PY2:
-                    temp = long(math.ceil((stored_address + 32) / float(32)))
-                else:
-                    temp = int(math.ceil((stored_address + 32) / float(32)))
-                if temp > current_miu_i:
-                    current_miu_i = temp
+            if isAllReal(stored_address):
+                assert stored_address % 32 == 0, 'Memory location not aligned: {}, PC={}, MSTORE'. \
+                    format(stored_address, global_state['pc'] - 1)
+
                 mem[stored_address] = stored_value  # note that the stored_value could be symbolic
             else:
-                temp = ((stored_address + 31) / 32) + 1
-                expression = current_miu_i < temp
-                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
-                print '{}: PC={}, stored_address={}, current_miu_i={}'.format('MSTORE', global_state["pc"] - 1, stored_address, current_miu_i)
+                # print '{}: PC={}, stored_address={}, current_miu_i={}'.format('MSTORE', global_state["pc"] - 1, stored_address, current_miu_i)
                 mem[str(stored_address)] = stored_value
-            global_state["miu_i"] = current_miu_i
         else:
             raise ValueError('STACK underflow')
     elif opcode == "MSTORE8":
@@ -1533,25 +1548,16 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             stored_address = stack.pop(0)
             temp_value = stack.pop(0)
             stored_value = temp_value % 256  # get the least byte
-            current_miu_i = global_state["miu_i"]
-            if isAllReal(stored_address, current_miu_i):
-                if six.PY2:
-                    temp = long(math.ceil((stored_address + 1) / float(32)))
-                else:
-                    temp = int(math.ceil((stored_address + 1) / float(32)))
-                if temp > current_miu_i:
-                    current_miu_i = temp
+
+            if isAllReal(stored_address):
+                assert stored_address % 32 == 0, 'Memory location not aligned: {}, PC={}, MSTORE8'. \
+                    format(stored_address, global_state['pc'] - 1)
+
                 mem[stored_address] = stored_value  # note that the stored_value could be symbolic
             else:
-                temp = (stored_address / 32) + 1
-                if isReal(current_miu_i):
-                    current_miu_i = BitVecVal(current_miu_i, 256)
-                expression = current_miu_i < temp
-                current_miu_i = If(expression, temp, current_miu_i)
                 mem.clear()  # very conservative
-                print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
+                # print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
                 mem[str(stored_address)] = stored_value
-            global_state["miu_i"] = current_miu_i
         else:
             raise ValueError('STACK underflow')
     elif opcode == "SLOAD":

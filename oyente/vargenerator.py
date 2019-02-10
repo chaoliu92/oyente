@@ -1,3 +1,6 @@
+from utils import isReal
+
+
 class Generator:
     def __init__(self):
         self.countstack = 0
@@ -5,31 +8,32 @@ class Generator:
 
     def gen_stack_var(self):
         self.countstack += 1
-        return "s" + str(self.countstack)
+        return "s[{}]".format(str(self.countstack))
 
-    def gen_data_var(self, position):
-        return "Id_" + str(position)
+    def gen_data_var(self, offset, length):
+        return "Id[{}: {}]".format(str(offset) if isReal(offset) else '({})'.format(offset),
+                                  str(length) if isReal(length) else '({})'.format(length))
 
     def gen_data_size(self):
         return "Id_size"
 
     def gen_mem_var(self, address):
-        return "mem_" + str(address)
+        return "mem[{}]".format(str(address))
 
     def gen_arbitrary_var(self):
         self.count += 1
-        return "some_var_" + str(self.count)
+        return "var[{}]".format(str(self.count))
 
     def gen_arbitrary_address_var(self):
         self.count += 1
-        return "some_address_" + str(self.count)
+        return "address[{}]".format(str(self.count))
 
-    def gen_owner_store_var(self, position, var_name=""):
-        return "Ia_store-%s-%s" % (str(position), var_name)
+    def gen_owner_store_var(self, position):
+        return "Ia_store[{}]".format(str(position))
 
     def gen_gas_var(self):
         self.count += 1
-        return "gas_" + str(self.count)
+        return "gas[{}]".format(str(self.count))
 
     def gen_gas_price_var(self):
         return "Ip"
@@ -45,10 +49,12 @@ class Generator:
 
     def gen_balance_var(self):
         self.count += 1
-        return "balance_" + str(self.count)
+        return "balance[{}]".format(str(self.count))
 
-    def gen_code_var(self, address, position, bytecount):
-        return "code_" + str(address) + "_" + str(position) + "_" + str(bytecount)
+    def gen_code_var(self, address, offset, length):
+        return "code[{}][{}: {}]".format(str(address) if isReal(address) else '({})'.format(address),
+                                        str(offset) if isReal(offset) else '({})'.format(offset),
+                                        str(length) if isReal(length) else '({})'.format(length))
 
     def gen_code_size_var(self, address):
-        return "code_size_" + str(address)
+        return "code_size[{}]".format(str(address))
