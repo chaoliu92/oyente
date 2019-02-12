@@ -517,6 +517,123 @@ def print_path_condition_and_vars(params):
     exit(0)
 
 
+def read_mem_word(mem, offset):
+    """Read 1 word from mem in words address (i.e., multiple of 32 bytes).
+
+    :param mem:
+    :param offset:
+    :return:
+    """
+    assert isReal(offset), 'Symbolic mem address, offset = {}'.format(offset)
+
+    offset = to_real(offset)  # convert from BitVecVal() to int() or long()
+
+    if offset % 32 == 0:  # address aligned to words (i.e., multiple of 32 bytes)
+        if offset in mem:
+            full_word = mem[offset]
+        elif long(offset) in mem:
+            full_word = mem[long(offset)]
+        else:
+            full_word = BitVecVal(0, 256)  # defaults to zero
+        full_word = to_symbolic(full_word)  # convert to BitVec(256) sort
+    else:
+        first_word = int(math.floor(float(offset) / 32)) * 32
+        second_word = int(math.floor((float(offset) + 32 - 1) / 32)) * 32
+        assert first_word + 32 == second_word, 'Error, first_word and second_word are not consecutive words, ' \
+                                               'first_word = {}, second_word = {}'.format(first_word, second_word)
+
+        # read first half
+        if first_word in mem:
+            first_half = mem[first_word]
+        elif long(first_word) in mem:
+            first_half = mem[long(first_word)]
+        else:
+            first_half = BitVecVal(0, 256)  # defaults to zero
+        first_half = to_symbolic(first_half)  # convert to BitVec(256) sort
+        head_bits = (offset - first_word) * 8
+        first_half = Extract(255 - head_bits, 0, first_half)
+
+        # read second half
+        if second_word in mem:
+            second_half = mem[second_word]
+        elif long(second_word) in mem:
+            second_half = mem[long(second_word)]
+        else:
+            second_half = BitVecVal(0, 256)  # defaults to zero
+        second_half = to_symbolic(second_half)  # convert to BitVec(256) sort
+        tail_bits = (last_word + 32 - offset - length) * 8
+        second_half = Extract(255, tail_bits, second_half)
+
+        # concatenate to a full word
+        full_word = Concat(first_half, second_half)
+
+    # assert isSymbolic(full_word), 'Return value must be symbolic (i.e., of BitVec(256) sort), full_word = {}'.\
+    #     format(full_word)
+
+    return full_word
+    # return full_word.as_long() if is_bv_value(full_word) else full_word
+
+
+def get_mem(mem, offset, length=32):
+    """Get mem content.
+
+    :param mem:
+    :param offset:
+    :param length:
+    :return:
+    """
+    assert isAllReal(offset, length), 'Error, offset and length not fully real, offset = {}, length = {}'.\
+        format(str(offset), str(length))
+
+    offset, length = all_to_real(offset, length)  # convert from BitVecVal() to int() or long()
+
+    first_word = int(math.floor(float(offset) / 32)) * 32
+    last_word = int(math.floor((float(offset) + length - 1) / 32)) * 32
+    assert first_word <= last_word, 'Error, first_word > last_word, first_word = {}, last_word = {}'.\
+        format(first_word, last_word)
+
+    if first_word == last_word:  # only at most 1 word to read (may truncate at both ends)
+        head_bits = (offset - first_word) * 8
+        tail_bits = (last_word + 32 - offset - length) * 8
+
+        full_word = to_symbolic(read_mem_word(mem, first_word))
+        truncated = Extract(255 - head_bits, tail_bits, full_word)
+        return [truncated]
+    else:
+        values = []
+
+        # process the first word (may truncate at the beginning)
+        head_bits = (offset - first_word) * 8
+
+        full_word = to_symbolic(read_mem_word(mem, first_word))
+        truncated = Extract(255 - head_bits, 0, full_word)
+        values.append(truncated)
+
+        # process the middle part (all full words)
+        word = first_word + 32
+        while word < last_word:
+            full_word = to_symbolic(read_mem_word(mem, word))
+            values.append(full_word)
+
+            word += 32
+
+        # process the last word (may truncate at the end)
+        tail_bits = (last_word + 32 - offset - length) * 8
+
+        full_word = to_symbolic(read_mem_word(mem, last_word))
+        truncated = Extract(255, tail_bits, full_word)
+        values.append(truncated)
+
+    return values
+
+
+# def write_mem_word(mem, offset)
+
+
+def set_mem(mem, offset, length=32, ):
+    pass
+
+
 def full_sym_exec():
     # executing, starting from beginning
     path_conditions_and_vars = {"path_condition": []}
@@ -660,23 +777,21 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
 
     visited_pcs.add(global_state["pc"])
 
+    instr_parts = str.split(instr, ' ')
+    opcode = instr_parts[0]
+
     if len(g_trace) == 0:  # Reach end of this trace
         print_path_condition_and_vars(params)
 
+    print 'PC={}, opcode={}'.format(g_trace[0], opcode)
+
     assert global_state["pc"] == g_trace[0], "Incorrect PC: {}, expected: {}".format(global_state["pc"], g_trace[0])
     g_trace.popleft()
-
-    instr_parts = str.split(instr, ' ')
-    opcode = instr_parts[0]
 
     if opcode == "INVALID":
         return
     elif opcode == "ASSERTFAIL":
         return
-
-    print 'PC={}, opcode={}'.format(g_trace[0], opcode)
-
-    # print 'PC={}, current_miu_i={}'.format(global_state['pc'], global_state["miu_i"])
 
     #
     #  0s: Stop and Arithmetic Operations
@@ -691,9 +806,13 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             second = stack.pop(0)
             # Type conversion is needed when they are mismatched
             if isReal(first) and isSymbolic(second):
+                first = to_real(first)  # convert from BitVecVal() to int() or long()
+
                 first = BitVecVal(first, 256)
                 computed = first + second
             elif isSymbolic(first) and isReal(second):
+                second = to_real(second)  # convert from BitVecVal() to int() or long()
+
                 second = BitVecVal(second, 256)
                 computed = first + second
             else:
@@ -702,6 +821,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 computed = (first + second) % (2 ** 256)  # if is concrete, the result type is long (suffix "L" in str like "32L") instead of int
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
+
+            # print 'ADD, PC = {}, first = {}, second = {}, computed = {}'.format(global_state['pc'] - 1, first, second, computed)
         else:
             raise ValueError('STACK underflow')
     elif opcode == "MUL":
@@ -710,8 +831,12 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isReal(first) and isSymbolic(second):
+                first = to_real(first)  # convert from BitVecVal() to int() or long()
+
                 first = BitVecVal(first, 256)
             elif isSymbolic(first) and isReal(second):
+                second = to_real(second)  # convert from BitVecVal() to int() or long()
+
                 second = BitVecVal(second, 256)
 
             # print 'PC={}, first={}, second={}'.format(global_state['pc'] - 1, first, second)
@@ -727,15 +852,21 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isReal(first) and isSymbolic(second):
+                first = to_real(first)  # convert from BitVecVal() to int() or long()
+
                 first = BitVecVal(first, 256)
                 computed = first - second
             elif isSymbolic(first) and isReal(second):
+                second = to_real(second)  # convert from BitVecVal() to int() or long()
+
                 second = BitVecVal(second, 256)
                 computed = first - second
             else:
                 computed = (first - second) % (2 ** 256)
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
+
+            # print 'SUB, PC = {}, first = {}, second = {}, computed = {}'.format(global_state['pc'] - 1, first, second, computed)
         else:
             raise ValueError('STACK underflow')
     elif opcode == "DIV":
@@ -744,6 +875,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 if second == 0:
                     computed = 0
                 else:
@@ -753,15 +886,12 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
-                solver.push()
-                solver.add(Not(second == 0))
-                if check_sat(solver) == unsat:  # second is definitely 0
-                    computed = 0
-                else:
-                    computed = UDiv(first, second)
-                solver.pop()
+                computed = UDiv(first, second)  # remove boundary condition check
+
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
+
+            # print 'DIV, PC = {}, first = {}, second = {}, computed = {}'.format(global_state['pc'] - 1, first, second, computed)
         else:
             raise ValueError('STACK underflow')
     elif opcode == "SDIV":
@@ -770,6 +900,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 first = to_signed(first)
                 second = to_signed(second)
                 if second == 0:
@@ -782,26 +914,13 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
-                solver.push()
-                solver.add(Not(second == 0))
-                if check_sat(solver) == unsat:
-                    computed = 0
-                else:
-                    solver.push()
-                    solver.add(Not(And(first == -2 ** 255, second == -1)))
-                    if check_sat(solver) == unsat:
-                        computed = -2 ** 255
-                    else:
-                        solver.push()
-                        solver.add(first / second < 0)
-                        sign = -1 if check_sat(solver) == sat else 1
-                        z3_abs = lambda x: If(x >= 0, x, -x)
-                        first = z3_abs(first)
-                        second = z3_abs(second)
-                        computed = sign * (first / second)
-                        solver.pop()
-                    solver.pop()
-                solver.pop()
+                sign = If(first / second < 0, -1, 1)
+
+                z3_abs = lambda x: If(x >= 0, x, -x)
+                first = z3_abs(first)
+                second = z3_abs(second)
+                computed = sign * (first / second)  # remove boundary condition check
+
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
         else:
@@ -812,6 +931,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 if second == 0:
                     computed = 0
                 else:
@@ -821,18 +942,12 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
-
-                solver.push()
-                solver.add(Not(second == 0))
-                if check_sat(solver) == unsat:
-                    # it is provable that second is indeed equal to zero
-                    computed = 0
-                else:
-                    computed = URem(first, second)
-                solver.pop()
+                computed = URem(first, second)  # remove boundary condition check
 
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
+
+            # print 'MOD, PC = {}, first = {}, second = {}, computed = {}'.format(global_state['pc'] - 1, first, second, computed)
         else:
             raise ValueError('STACK underflow')
     elif opcode == "SMOD":
@@ -841,6 +956,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 if second == 0:
                     computed = 0
                 else:
@@ -851,26 +968,13 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
+                sign = If(first < 0, BitVecVal(-1, 256), BitVecVal(1, 256))
 
-                solver.push()
-                solver.add(Not(second == 0))
-                if check_sat(solver) == unsat:
-                    # it is provable that second is indeed equal to zero
-                    computed = 0
-                else:
+                z3_abs = lambda x: If(x >= 0, x, -x)
+                first = z3_abs(first)
+                second = z3_abs(second)
 
-                    solver.push()
-                    solver.add(first < 0)  # check sign of first element
-                    sign = BitVecVal(-1, 256) if check_sat(solver) == sat \
-                        else BitVecVal(1, 256)
-                    solver.pop()
-
-                    z3_abs = lambda x: If(x >= 0, x, -x)
-                    first = z3_abs(first)
-                    second = z3_abs(second)
-
-                    computed = sign * (first % second)
-                solver.pop()
+                computed = sign * (first % second)  # remove boundary condition check
 
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
@@ -884,6 +988,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             third = stack.pop(0)
 
             if isAllReal(first, second, third):
+                first, second, third = all_to_real(first, second, third)  # convert from BitVecVal() to int() or long()
+
                 if third == 0:
                     computed = 0
                 else:
@@ -891,17 +997,13 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
-                solver.push()
-                solver.add(Not(third == 0))
-                if check_sat(solver) == unsat:
-                    computed = 0
-                else:
-                    first = ZeroExt(256, first)
-                    second = ZeroExt(256, second)
-                    third = ZeroExt(256, third)
-                    computed = (first + second) % third
-                    computed = Extract(255, 0, computed)
-                solver.pop()
+
+                first = ZeroExt(256, first)
+                second = ZeroExt(256, second)
+                third = ZeroExt(256, third)
+                computed = (first + second) % third
+                computed = Extract(255, 0, computed)  # remove boundary condition check
+
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
         else:
@@ -914,6 +1016,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             third = stack.pop(0)
 
             if isAllReal(first, second, third):
+                first, second, third = all_to_real(first, second, third)  # convert from BitVecVal() to int() or long()
+
                 if third == 0:
                     computed = 0
                 else:
@@ -921,17 +1025,13 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
-                solver.push()
-                solver.add(Not(third == 0))
-                if check_sat(solver) == unsat:
-                    computed = 0
-                else:
-                    first = ZeroExt(256, first)
-                    second = ZeroExt(256, second)
-                    third = ZeroExt(256, third)
-                    computed = URem(first * second, third)
-                    computed = Extract(255, 0, computed)
-                solver.pop()
+
+                first = ZeroExt(256, first)
+                second = ZeroExt(256, second)
+                third = ZeroExt(256, third)
+                computed = URem(first * second, third)
+                computed = Extract(255, 0, computed)  # remove boundary condition check
+
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
         else:
@@ -943,6 +1043,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             exponent = stack.pop(0)
             # Type conversion is needed when they are mismatched
             if isAllReal(base, exponent):
+                base, exponent = all_to_real(base, exponent)  # convert from BitVecVal() to int() or long()
+
                 computed = pow(base, exponent, 2 ** 256)
             else:
                 # The computed value is unknown, this is because power is
@@ -961,6 +1063,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 if first >= 32 or first < 0:
                     computed = second
                 else:
@@ -972,20 +1076,12 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
-                solver.push()
-                solver.add(Not(Or(first >= 32, first < 0)))
-                if check_sat(solver) == unsat:
-                    computed = second
-                else:
-                    signbit_index_from_right = 8 * first + 7
-                    solver.push()
-                    solver.add(second & (1 << signbit_index_from_right) == 0)
-                    if check_sat(solver) == unsat:
-                        computed = second | (2 ** 256 - (1 << signbit_index_from_right))
-                    else:
-                        computed = second & ((1 << signbit_index_from_right) - 1)
-                    solver.pop()
-                solver.pop()
+                signbit_index_from_right = 8 * first + 7
+
+                computed = If(second & (1 << signbit_index_from_right) == 0,
+                              second & ((1 << signbit_index_from_right) - 1),
+                              second | (2 ** 256 - (1 << signbit_index_from_right)))  # remove boundary condition check
+
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
         else:
@@ -1005,6 +1101,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 first = to_unsigned(first)
                 second = to_unsigned(second)
                 if first < second:
@@ -1023,6 +1121,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 first = to_unsigned(first)
                 second = to_unsigned(second)
                 if first > second:
@@ -1041,6 +1141,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 first = to_signed(first)
                 second = to_signed(second)
                 if first < second:
@@ -1059,6 +1161,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 first = to_signed(first)
                 second = to_signed(second)
                 if first > second:
@@ -1077,6 +1181,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             first = stack.pop(0)
             second = stack.pop(0)
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 if first == second:
                     computed = 1
                 else:
@@ -1095,6 +1201,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             global_state["pc"] = global_state["pc"] + 1
             first = stack.pop(0)
             if isReal(first):
+                first = to_real(first)  # convert from BitVecVal() to int() or long()
+
                 if first == 0:
                     computed = 1
                 else:
@@ -1156,6 +1264,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             second = stack.pop(0)
 
             if isAllReal(first, second):
+                first, second = all_to_real(first, second)  # convert from BitVecVal() to int() or long()
+
                 if first >= 32 or first < 0:
                     computed = 0
                 else:
@@ -1164,14 +1274,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 first = to_symbolic(first)
                 second = to_symbolic(second)
-                solver.push()
-                solver.add(Not(Or(first >= 32, first < 0)))
-                if check_sat(solver) == unsat:
-                    computed = 0
-                else:
-                    computed = second & (255 << (8 * byte_index))
-                    computed = computed >> (8 * byte_index)
-                solver.pop()
+
+                computed = second & (255 << (8 * byte_index))
+                computed = computed >> (8 * byte_index)  # remove boundary condition check
+
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
         else:
@@ -1185,8 +1291,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             s0 = stack.pop(0)
             s1 = stack.pop(0)
             if isAllReal(s0, s1):
-                assert s0 % 32 == 0 and s1 % 32 == 0, 'Memory location not aligned: {}, {}, PC={}, SHA3'. \
-                    format(s0, s1, global_state['pc'] - 1)
+                s0, s1 = all_to_real(s0, s1)  # convert from BitVecVal() to int() or long()
 
                 # simulate the hashing of sha3, use an arbitrary function
                 data = [str(x) for x in memory[s0: s0 + s1]]
@@ -1199,29 +1304,34 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     stack.insert(0, sha3_list[position])
                 else:
                     new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
-
-                    sha3_input = []  # input of SHA3, list of concrete or symbolic value
-                    # first and last word (32 bytes) in memory that is to read (inclusive)
-                    first_word = int(math.floor(float(s0) / 32))
-                    last_word = int(math.floor((float(s0) + s1 - 1) / 32))
-                    assert first_word <= last_word, \
-                        "SHA3: {}, {}; Wrong word index: {} > {}, PC={}".\
-                            format(s0, s1, first_word, last_word, global_state['pc'] - 1)
-                    word = first_word * 32
-                    while word <= last_word * 32:  # iterate through each input word
-                        if word in mem:  # type(word) = int
-                            sha3_input.append(str(mem[word]))
-                        elif long(word) in mem:  # in case we have long type address other than int type
-                            sha3_input.append(str(mem[long(word)]))
-                        else:
-                            sha3_input.append(str(BitVecVal(0, 256)))  # memory initialized to all zero
-                            # raise NotImplementedError(word, mem)
-                        word += 32
-                    var_origins[new_var_name] = ("SHA3({})".format("; ".join(sha3_input)), global_state["pc"] - 1)
-
                     new_var = BitVec(new_var_name, 256)
                     sha3_list[position] = new_var
                     stack.insert(0, new_var)
+
+                    # # record value origins
+                    # sha3_input = []  # input of SHA3, list of concrete or symbolic value
+                    # # first and last word address (multiple of 32 bytes) in memory that is to read (inclusive)
+                    # first_word = int(math.floor(float(s0) / 32)) * 32
+                    # last_word = int(math.floor((float(s0) + s1 - 1) / 32)) * 32
+                    # assert first_word <= last_word, \
+                    #     "SHA3: {}, {}; Wrong word index: {} > {}, PC = {}".\
+                    #         format(s0, s1, first_word, last_word, global_state['pc'] - 1)
+                    #
+                    # # process middle words (full word size, i.e., multiple of 32 bytes)
+                    # word = first_word
+                    # while word <= last_word:  # iterate through each input word
+                    #     if word in mem:  # type(word) = int
+                    #         sha3_input.append(str(mem[word]))
+                    #     elif long(word) in mem:  # in case we have long type address other than int type
+                    #         sha3_input.append(str(mem[long(word)]))
+                    #     else:
+                    #         # TODO account for byte value
+                    #         sha3_input.append(str(BitVecVal(0, 256)))  # memory initialized to all zero
+                    #         # raise NotImplementedError(word, mem)
+                    #     word += 32
+
+                    sha3_input = [str(value) for value in get_mem(mem, s0, s1)]
+                    var_origins[new_var_name] = ("SHA3({})".format("; ".join(sha3_input)), global_state["pc"] - 1)
             else:
                 # push into the execution a fresh symbolic variable
                 new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
@@ -1243,6 +1353,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             global_state["pc"] = global_state["pc"] + 1
             address = stack.pop(0)
             if isReal(address) and global_params.USE_GLOBAL_BLOCKCHAIN:
+                address = to_real(address)  # convert from BitVecVal() to int() or long()
+
                 new_var = data_source.getBalance(address)
             else:
                 new_var_name = gen.gen_balance_var()
@@ -1252,6 +1364,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     new_var = BitVec(new_var_name, 256)
                     path_conditions_and_vars[new_var_name] = new_var
             if isReal(address):
+                address = to_real(address)  # convert from BitVecVal() to int() or long()
+
                 hashed_address = "concrete_address_" + str(address)
             else:
                 hashed_address = str(address)
@@ -1304,6 +1418,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             no_bytes = stack.pop(0)
 
             if isAllReal(mem_location, calldata_from, no_bytes):
+                mem_location, calldata_from, no_bytes = all_to_real(mem_location, calldata_from, no_bytes)  # convert from BitVecVal() to int() or long()
+
                 assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CALLDATACOPY'.\
                     format(mem_location, global_state['pc'] - 1)
 
@@ -1327,6 +1443,11 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     word += 1
                     calldata_from += 32  # move forward 32 bytes (1 word)
             elif isReal(mem_location):
+                mem_location = to_real(mem_location)  # convert from BitVecVal() to int() or long()
+
+                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CALLDATACOPY'. \
+                    format(mem_location, global_state['pc'] - 1)
+
                 new_var_name = gen.gen_data_var(calldata_from, no_bytes)
                 if new_var_name in path_conditions_and_vars:
                     new_var = path_conditions_and_vars[new_var_name]
@@ -1357,6 +1478,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             no_bytes = stack.pop(0)
 
             if isAllReal(mem_location, code_from, no_bytes):
+                mem_location, code_from, no_bytes = all_to_real(mem_location, code_from, no_bytes)  # convert from BitVecVal() to int() or long()
+
                 assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CODECOPY'. \
                     format(mem_location, global_state['pc'] - 1)
 
@@ -1380,7 +1503,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     path_conditions_and_vars[new_var_name] = new_var
 
                 mem.clear()  # very conservative
-                # print '{}: PC={}'.format('CODECOPY', global_state["pc"] - 1)
+                print '{}: PC={}'.format('CODECOPY', global_state["pc"] - 1)
                 mem[str(mem_location)] = new_var
         else:
             raise ValueError('STACK underflow')
@@ -1408,6 +1531,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             global_state["pc"] = global_state["pc"] + 1
             address = stack.pop(0)
             if isReal(address) and global_params.USE_GLOBAL_BLOCKCHAIN:
+                address = to_real(address)  # convert from BitVecVal() to int() or long()
+
                 code = data_source.getCode(address)
                 stack.insert(0, len(code) / 2)
             else:
@@ -1430,6 +1555,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             no_bytes = stack.pop(0)
 
             if isAllReal(address, mem_location, code_from, no_bytes) and USE_GLOBAL_BLOCKCHAIN:
+                address, mem_location, code_from, no_bytes = all_to_real(address, mem_location, code_from, no_bytes)  # convert from BitVecVal() to int() or long()
+
                 assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, EXTCODECOPY'. \
                     format(mem_location, global_state['pc'] - 1)
 
@@ -1447,7 +1574,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     path_conditions_and_vars[new_var_name] = new_var
 
                 mem.clear()  # very conservative
-                # print '{}: PC={}'.format('EXTCODECOPY', global_state["pc"] - 1)
+                print '{}: PC={}'.format('EXTCODECOPY', global_state["pc"] - 1)
                 mem[str(mem_location)] = new_var
         else:
             raise ValueError('STACK underflow')
@@ -1500,11 +1627,14 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             global_state["pc"] = global_state["pc"] + 1
             address = stack.pop(0)
 
-            if isAllReal(address) and address in mem:
-                assert address % 32 == 0, 'Memory location not aligned: {}, PC={}, MLOAD'. \
-                    format(address, global_state['pc'] - 1)
+            if isReal(address) and to_real(address) in mem:
+                address = to_real(address)  # convert from BitVecVal() to int() or long()
 
-                value = mem[address]
+                # assert address % 32 == 0, 'Memory location not aligned: {}, PC={}, MLOAD'. \
+                #     format(address, global_state['pc'] - 1)
+
+                value = read_mem_word(mem, address)
+                # value = mem[address]
                 stack.insert(0, value)
             else:
                 # print '{}, PC={}, mem={}'.format('MLOAD', global_state['pc'] - 1, mem)
@@ -1517,6 +1647,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     path_conditions_and_vars[new_var_name] = new_var
                 stack.insert(0, new_var)
                 if isReal(address):
+                    address = to_real(address)
+
                     mem[address] = new_var
                 else:
                     mem[str(address)] = new_var
@@ -1529,6 +1661,10 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             stored_value = stack.pop(0)
 
             if isReal(stored_address):
+                stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
+
+                stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
+
                 # preparing data for hashing later
                 old_size = len(memory) // 32
                 new_size = ceil32(stored_address + 32) // 32
@@ -1538,14 +1674,46 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 for i in range(31, -1, -1):  # 31, 30, ..., 1, 0
                     memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
                     value /= 256
-            if isAllReal(stored_address):
-                assert stored_address % 32 == 0, 'Memory location not aligned: {}, PC={}, MSTORE'. \
-                    format(stored_address, global_state['pc'] - 1)
+            if isReal(stored_address):
+                stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
 
-                mem[stored_address] = stored_value  # note that the stored_value could be symbolic
+                if stored_address % 32 == 0:  # stored_address aligned in words
+                    mem[stored_address] = stored_value  # note that the stored_value could be symbolic
+                else:  # stored_address not aligned in words (i.e., access starting from the middle of word)
+                    # update conflict words (i.e., words that my overlap)
+                    precede_word = int(math.floor(float(stored_address) / 32))
+                    succeed_word = int(math.ceil(float(stored_address) / 32))
+                    assert precede_word + 1 == succeed_word, 'incorrect word address, {} + 1 != {}'.\
+                        format(precede_word, succeed_word)
+
+                    precede_word = precede_word * 32
+                    succeed_word = succeed_word * 32
+                    if precede_word in mem or long(precede_word) in mem:  # update precede word
+                        offset_bits = (stored_address - precede_word) * 8
+                        overlap_bits = (precede_word + 32 - stored_address) * 8
+
+                        origin_value = mem[precede_word] if precede_word in mem else mem[long(precede_word)]
+                        new_value = ((origin_value >> overlap_bits) << overlap_bits) | (stored_value >> offset_bits)
+                        mem[precede_word] = simplify(new_value) if is_expr(new_value) else new_value
+                    else:
+                        offset_bits = (stored_address - precede_word) * 8
+                        truncated = stored_value >> offset_bits
+                        mem[precede_word] = simplify(truncated) if is_expr(truncated) else truncated
+
+                    if succeed_word in mem or long(succeed_word) in mem:  # update succeed word
+                        offset_bits = (stored_address - precede_word) * 8
+                        overlap_bits = (precede_word + 32 - stored_address) * 8
+
+                        origin_value = mem[succeed_word] if succeed_word in mem else mem[long(succeed_word)]
+                        new_value = ((origin_value << offset_bits) >> offset_bits) | (stored_value << overlap_bits)
+                        mem[succeed_word] = simplify(new_value) if is_expr(new_value) else new_value
+                    else:
+                        overlap_bits = (precede_word + 32 - stored_address) * 8
+                        truncated = stored_value << overlap_bits
+                        mem[succeed_word] = simplify(truncated) if is_expr(truncated) else truncated
             else:
                 mem.clear()  # very conservative
-                # print '{}: PC={}, stored_address={}, current_miu_i={}'.format('MSTORE', global_state["pc"] - 1, stored_address, current_miu_i)
+                print '{}: PC={}, stored_address={}'.format('MSTORE', global_state["pc"] - 1, stored_address)
                 mem[str(stored_address)] = stored_value
         else:
             raise ValueError('STACK underflow')
@@ -1556,14 +1724,16 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             temp_value = stack.pop(0)
             stored_value = temp_value % 256  # get the least byte
 
-            if isAllReal(stored_address):
+            if isReal(stored_address):
+                stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
+
                 assert stored_address % 32 == 0, 'Memory location not aligned: {}, PC={}, MSTORE8'. \
                     format(stored_address, global_state['pc'] - 1)
 
                 mem[stored_address] = stored_value  # note that the stored_value could be symbolic
             else:
                 mem.clear()  # very conservative
-                # print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
+                print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
                 mem[str(stored_address)] = stored_value
         else:
             raise ValueError('STACK underflow')
@@ -1572,9 +1742,13 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             global_state["pc"] = global_state["pc"] + 1
             position = stack.pop(0)
             if isReal(position) and position in global_state["Ia"]:
+                position = to_real(position)  # convert from BitVecVal() to int() or long()
+
                 value = global_state["Ia"][position]
                 stack.insert(0, value)
             elif global_params.USE_GLOBAL_STORAGE and isReal(position) and position not in global_state["Ia"]:
+                position = to_real(position)  # convert from BitVecVal() to int() or long()
+
                 value = data_source.getStorageAt(position)
                 global_state["Ia"][position] = value
                 stack.insert(0, value)
@@ -1594,6 +1768,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                         path_conditions_and_vars[new_var_name] = new_var
                     stack.insert(0, new_var)
                     if isReal(position):
+                        position = to_real(position)  # convert from BitVecVal() to int() or long()
+
                         global_state["Ia"][position] = new_var
                     else:
                         global_state["Ia"][str(position)] = new_var
@@ -1608,6 +1784,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             stored_address = stack.pop(0)
             stored_value = stack.pop(0)
             if isReal(stored_address):
+                stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
+
                 # note that the stored_value could be unknown
                 global_state["Ia"][stored_address] = stored_value
             else:
@@ -1623,6 +1801,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     target_address = int(str(simplify(target_address)))
                 except:
                     raise TypeError("Target address must be an integer")
+            target_address = to_real(target_address)  # convert from BitVecVal() to int() or long()
+
             vertices[block].set_jump_target(target_address)
             if target_address not in edges[block]:
                 edges[block].append(target_address)
@@ -1637,10 +1817,17 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     target_address = int(str(simplify(target_address)))
                 except:
                     raise TypeError("Target address must be an integer")
+            target_address = to_real(target_address)  # convert from BitVecVal() to int() or long()
+
             vertices[block].set_jump_target(target_address)
             flag = stack.pop(0)
             # branch_expression = (BitVecVal(0, 1) == BitVecVal(1, 1))
+
+            # print 'PC = {}, flag = {}'.format(global_state['pc'] - 1, flag)
+
             if isReal(flag):
+                flag = to_real(flag)  # convert from BitVecVal() to int() or long()
+
                 if flag != 0:
                     branch_expression = True
                 else:
@@ -1678,7 +1865,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     elif opcode.startswith('PUSH', 0):  # this is a push instruction
         position = int(opcode[4:], 10)
         global_state["pc"] = global_state["pc"] + 1 + position
-        pushed_value = int(instr_parts[1], 16)
+        pushed_value = to_symbolic(int(instr_parts[1], 16))  # store value in symbol (i.e., BitVecVal(256) instance)
         stack.insert(0, pushed_value)
     #
     #  80s: Duplication Operations
@@ -1748,6 +1935,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             # min of stack[6] and the | o |
 
             if isReal(transfer_amount):
+                transfer_amount = to_real(transfer_amount)
+
                 if transfer_amount == 0:
                     stack.insert(0, 1)  # x = 1, assume this call will always succeed without side effects
                     return
@@ -1783,6 +1972,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 else:
                     solver.pop()
                     if isReal(recipient):
+                        recipient = to_real(recipient)
+
                         new_address_name = "concrete_address_" + str(recipient)
                     else:
                         new_address_name = gen.gen_arbitrary_address_var()
@@ -1813,6 +2004,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             recipient = stack.pop(0)  # this is not used as recipient
             if global_params.USE_GLOBAL_STORAGE:
                 if isReal(recipient):
+                    recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
+
                     recipient = hex(recipient)
                     if recipient[-1] == "L":
                         recipient = recipient[:-1]
@@ -1829,6 +2022,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             # min of stack[6] and the | o |
 
             if isReal(transfer_amount):
+                transfer_amount = to_real(transfer_amount)  # convert from BitVecVal() to int() or long()
+
                 if transfer_amount == 0:
                     stack.insert(0, 1)  # x = 1, assume execution is correct without side effects
                     return
@@ -1860,6 +2055,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
 
             if global_params.USE_GLOBAL_STORAGE:
                 if isReal(recipient):
+                    recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
+
                     recipient = hex(recipient)
                     if recipient[-1] == "L":
                         recipient = recipient[:-1]
@@ -1899,6 +2096,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         global_state["balance"]["Ia"] = 0
 
         if isReal(recipient):
+            recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
+
             new_address_name = "concrete_address_" + str(recipient)
         else:
             new_address_name = gen.gen_arbitrary_address_var()

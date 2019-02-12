@@ -175,4 +175,5 @@ if __name__ == '__main__':
 
     # show_results(0, 'result', 151, num_cases=1, only_exception=False)
     # show_results(1, 'result', 0, num_cases=1, only_exception=True)
-    show_results(2, 'result', 0, num_cases=1, only_exception=True)
+    # show_results(2, 'result', 0, num_cases=1, only_exception=True)
+    show_results(3, 'result', 0, num_cases=1, only_exception=True)

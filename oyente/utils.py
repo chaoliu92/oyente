@@ -15,14 +15,20 @@ import six
 from z3 import *
 from z3.z3util import get_vars
 
+
 def ceil32(x):
     return x if x % 32 == 0 else x + 32 - (x % 32)
 
+
 def isSymbolic(value):
-    return not isinstance(value, six.integer_types)
+    # return not isinstance(value, six.integer_types)
+    return not isReal(value)
+
 
 def isReal(value):
-    return isinstance(value, six.integer_types)
+    # return isinstance(value, six.integer_types)
+    return is_bv_value(value) or isinstance(value, six.integer_types)
+
 
 def isAllReal(*args):
     for element in args:
@@ -30,21 +36,39 @@ def isAllReal(*args):
             return False
     return True
 
+
+def to_real(number):
+    if isinstance(number, six.integer_types):
+        return number
+    return number.as_long()
+
+
+def all_to_real(*args):
+    values = []
+    for number in args:
+        values.append(to_real(number))
+    return values
+
+
 def to_symbolic(number):
-    if isReal(number):
+    # if isReal(number):
+    if isinstance(number, six.integer_types):
         return BitVecVal(number, 256)
     return number
 
+
 def to_unsigned(number):
     if number < 0:
-        return number + 2**256
+        return number + 2 ** 256
     return number
 
+
 def to_signed(number):
-    if number > 2**(256 - 1):
-        return (2**(256) - number) * (-1)
+    if number > 2 ** (256 - 1):
+        return (2 ** (256) - number) * (-1)
     else:
         return number
+
 
 def check_sat(solver, pop_if_exception=True):
     try:
@@ -56,6 +80,7 @@ def check_sat(solver, pop_if_exception=True):
             solver.pop()
         raise e
     return ret
+
 
 def custom_deepcopy(input):
     output = {}
@@ -78,6 +103,7 @@ def is_storage_var(var):
 # TODO: add balance in the future
 def copy_global_values(global_state):
     return global_state['Ia']
+
 
 # check if a variable is in an expression
 def is_in_expr(var, expr):
@@ -106,8 +132,11 @@ def get_all_vars(exprs):
 def get_storage_position(var):
     if not isinstance(var, str): var = var.decl().name()
     pos = var.split('-')[1]
-    try: return int(pos)
-    except: return pos
+    try:
+        return int(pos)
+    except:
+        return pos
+
 
 # Rename variables to distinguish variables in two different paths.
 # e.g. Ia_store_0 in path i becomes Ia_store_0_old if Ia_store_0 is modified
@@ -151,7 +180,7 @@ def rename_vars(pcs, global_states):
                 var_name = var.decl().name()
                 # check if a var is global
                 if var_name.startswith("Ia_store_"):
-                    position = int(var_name.split('_')[len(var_name.split('_'))-1])
+                    position = int(var_name.split('_')[len(var_name.split('_')) - 1])
                     # if it is not modified
                     if position not in global_states:
                         continue
@@ -166,7 +195,7 @@ def rename_vars(pcs, global_states):
 
 
 # split a file into smaller files
-def split_dicts(filename, nsub = 500):
+def split_dicts(filename, nsub=500):
     with open(filename) as json_file:
         c = json.load(json_file)
         current_file = {}
@@ -249,13 +278,13 @@ def get_time_dependant_contracts(list_of_contracts):
                 fp.writerow([contract_addr, value, txs])
 
 
-def get_distinct_contracts(list_of_contracts = "concurr.csv"):
+def get_distinct_contracts(list_of_contracts="concurr.csv"):
     flag = []
     with open(list_of_contracts, "rb") as csvfile:
         contracts = csvfile.readlines()[1:]
         n = len(contracts)
         for i in range(n):
-            flag.append(i) # mark which contract is similar to contract_i
+            flag.append(i)  # mark which contract is similar to contract_i
         for i in range(n):
             if flag[i] != i:
                 continue
@@ -264,7 +293,7 @@ def get_distinct_contracts(list_of_contracts = "concurr.csv"):
             npair_i = int(contracts[i].split(",")[2])
             file_i = "stats/tmp_" + contract_i + ".evm"
             six.print_(" reading file " + file_i)
-            for j in range(i+1, n):
+            for j in range(i + 1, n):
                 if flag[j] != j:
                     continue
                 contract_j = contracts[j].split(",")[0]
@@ -287,10 +316,12 @@ def get_distinct_contracts(list_of_contracts = "concurr.csv"):
                             flag[j] = i
     six.print_(flag)
 
+
 def run_command(cmd):
     FNULL = open(os.devnull, 'w')
     solc_p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE, stderr=FNULL)
     return solc_p.communicate()[0].decode('utf-8', 'strict')
+
 
 def run_command_with_err(cmd):
     FNULL = open(os.devnull, 'w')
@@ -299,4 +330,3 @@ def run_command_with_err(cmd):
     out = out.decode('utf-8', 'strict')
     err = err.decode('utf-8', 'strict')
     return out, err
-
