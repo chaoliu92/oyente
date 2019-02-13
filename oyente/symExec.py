@@ -535,6 +535,7 @@ def read_mem_word(mem, offset):
             full_word = mem[long(offset)]
         else:
             full_word = BitVecVal(0, 256)  # defaults to zero
+            mem[offset] = full_word
         full_word = to_symbolic(full_word)  # convert to BitVec(256) sort
     else:
         first_word = int(math.floor(float(offset) / 32)) * 32
@@ -549,6 +550,7 @@ def read_mem_word(mem, offset):
             first_half = mem[long(first_word)]
         else:
             first_half = BitVecVal(0, 256)  # defaults to zero
+            mem[first_word] = first_half
         first_half = to_symbolic(first_half)  # convert to BitVec(256) sort
         head_bits = (offset - first_word) * 8
         first_half = Extract(255 - head_bits, 0, first_half)
@@ -560,18 +562,16 @@ def read_mem_word(mem, offset):
             second_half = mem[long(second_word)]
         else:
             second_half = BitVecVal(0, 256)  # defaults to zero
+            mem[second_word] = second_half
         second_half = to_symbolic(second_half)  # convert to BitVec(256) sort
-        tail_bits = (last_word + 32 - offset - length) * 8
+        tail_bits = (second_word + 32 - offset - 32) * 8
         second_half = Extract(255, tail_bits, second_half)
 
         # concatenate to a full word
         full_word = Concat(first_half, second_half)
-
-    # assert isSymbolic(full_word), 'Return value must be symbolic (i.e., of BitVec(256) sort), full_word = {}'.\
-    #     format(full_word)
+        assert full_word.sort() == BitVecSort(256)
 
     return full_word
-    # return full_word.as_long() if is_bv_value(full_word) else full_word
 
 
 def get_mem(mem, offset, length=32):
@@ -596,7 +596,7 @@ def get_mem(mem, offset, length=32):
         head_bits = (offset - first_word) * 8
         tail_bits = (last_word + 32 - offset - length) * 8
 
-        full_word = to_symbolic(read_mem_word(mem, first_word))
+        full_word = read_mem_word(mem, first_word)
         truncated = Extract(255 - head_bits, tail_bits, full_word)
         return [truncated]
     else:
@@ -605,14 +605,14 @@ def get_mem(mem, offset, length=32):
         # process the first word (may truncate at the beginning)
         head_bits = (offset - first_word) * 8
 
-        full_word = to_symbolic(read_mem_word(mem, first_word))
+        full_word = read_mem_word(mem, first_word)
         truncated = Extract(255 - head_bits, 0, full_word)
         values.append(truncated)
 
         # process the middle part (all full words)
         word = first_word + 32
         while word < last_word:
-            full_word = to_symbolic(read_mem_word(mem, word))
+            full_word = read_mem_word(mem, word)
             values.append(full_word)
 
             word += 32
@@ -620,18 +620,266 @@ def get_mem(mem, offset, length=32):
         # process the last word (may truncate at the end)
         tail_bits = (last_word + 32 - offset - length) * 8
 
-        full_word = to_symbolic(read_mem_word(mem, last_word))
+        full_word = read_mem_word(mem, last_word)
         truncated = Extract(255, tail_bits, full_word)
         values.append(truncated)
 
     return values
 
 
-# def write_mem_word(mem, offset)
+def write_mem_byte(mem, offset, value):
+    """Write 1 byte (i.e., value) to memory (i.e., mem) in given address (i.e., offset).
+
+    :param mem:
+    :param offset:
+    :param value:
+    :return:
+    """
+    assert isReal(offset), 'Error, offset must be real number (or BitVecVal), offset = {}'.format(offset)
+    assert value.sort() == BitVecSort(256)
+
+    offset = to_real(offset)  # convert from BitVecVal() to int() or long()
+
+    word = int(math.floor(float(offset) / 32)) * 32
+
+    head_bits = (offset - word) * 8
+    tail_bits = (word + 32 - offset - 1) * 8
+
+    origin_word = read_mem_word(mem, word)
+    mask = mask_vector(head_bits, tail_bits)
+    new_word = value << tail_bits
+
+    mem[word] = simplify(origin_word & mask | new_word)
 
 
-def set_mem(mem, offset, length=32, ):
-    pass
+def write_mem_word(mem, offset, value):
+    """Write 1 word (i.e., value) to memory (i.e., mem) in given address (i.e., offset).
+
+    :param mem:
+    :param offset:
+    :param value:
+    :return:
+    """
+    assert isReal(offset), 'Error, offset must be real number (or BitVecVal), offset = {}'.format(offset)
+
+    offset = to_real(offset)  # convert from BitVecVal() to int() or long()
+    value = to_symbolic(value)  # convert from BitVecVal() to int() or long()
+
+    if offset % 32 == 0:  # stored_address aligned in words
+        mem[offset] = value  # note that the stored_value could be symbolic
+    else:  # stored_address not aligned in words (i.e., access starting from the middle of word)
+        # update conflict words (i.e., words that my overlap)
+        precede_word = int(math.floor(float(offset) / 32))
+        succeed_word = int(math.ceil(float(offset) / 32))
+        assert precede_word + 1 == succeed_word, 'incorrect word address, {} + 1 != {}'. \
+            format(precede_word, succeed_word)
+
+        precede_word = precede_word * 32
+        succeed_word = succeed_word * 32
+        if precede_word in mem or long(precede_word) in mem:  # update precede word
+            offset_bits = (offset - precede_word) * 8
+            overlap_bits = (precede_word + 32 - offset) * 8
+
+            origin_value = mem[precede_word] if precede_word in mem else mem[long(precede_word)]
+            new_value = (LShR(origin_value, overlap_bits) << overlap_bits) | LShR(value, offset_bits)
+            mem[precede_word] = simplify(new_value) if is_expr(new_value) else new_value
+        else:
+            offset_bits = (offset - precede_word) * 8
+            truncated = LShR(value, offset_bits)  # logical shift right, Note: >> is arithmetic shift right (i.e., signed)
+            mem[precede_word] = simplify(truncated) if is_expr(truncated) else truncated
+
+        if succeed_word in mem or long(succeed_word) in mem:  # update succeed word
+            offset_bits = (offset - precede_word) * 8
+            overlap_bits = (precede_word + 32 - offset) * 8
+
+            origin_value = mem[succeed_word] if succeed_word in mem else mem[long(succeed_word)]
+            new_value = LShR((origin_value << offset_bits), offset_bits) | (value << overlap_bits)
+            mem[succeed_word] = simplify(new_value) if is_expr(new_value) else new_value
+        else:
+            overlap_bits = (precede_word + 32 - offset) * 8
+            truncated = value << overlap_bits
+            mem[succeed_word] = simplify(truncated) if is_expr(truncated) else truncated
+
+
+def mask_vector(head_bits, tail_bits):
+    """Return a mask BitVecVal with head and tail all set to 1, the reset set to 0.
+
+    E.g., mask_vector(1, 1) = BitVecVal(1 [0 ... 0] 1, 256), where num of '0' is 256 - 1 - 1 = 254.
+    :param head_bits:
+    :param tail_bits:
+    :return:
+    """
+    assert head_bits + tail_bits <= 256
+    head = simplify(to_symbolic(2**head_bits - 1) << (256 - head_bits))
+    tail = to_symbolic(2**tail_bits - 1)
+    return simplify(head | tail)
+
+
+def set_mem_code(mem, offset, length, code):
+    """Set memory, content is assumed to be CODE (in hex) list.
+
+    :param mem:
+    :param offset:
+    :param length:
+    :param code: code in hex, represented as a str, e.g., '289af712'
+    :return:
+    """
+    assert isAllReal(offset, length), 'Error, offset and length not fully real, offset = {}, length = {}'. \
+        format(str(offset), str(length))
+
+    offset, length = all_to_real(offset, length)  # convert from BitVecVal() to int() or long()
+
+    code_pattern = re.compile(r'^([0-9a-fA-F]*)$')
+    assert code_pattern.match(code) and len(code) == 2 * length, 'Invalid content, content = {}'.format(code)
+
+    code = bytearray.fromhex(code)  # code in bytearray type
+
+    first_word = int(math.floor(float(offset) / 32)) * 32
+    last_word = int(math.floor((float(offset) + length - 1) / 32)) * 32
+    assert first_word <= last_word, 'Error, first_word > last_word, first_word = {}, last_word = {}'. \
+        format(first_word, last_word)
+
+    def code_word_to_int(code):  # convert code in bytearray to corresponding int value
+        assert isinstance(code, bytearray) and len(code) <= 64
+        i = 0
+        for b in code:
+            i = i * 256 + b
+
+    if first_word == last_word:  # only at most 1 word to read (may truncate at both ends)
+        head_bits = (offset - first_word) * 8
+        tail_bits = (last_word + 32 - offset - length) * 8
+
+        origin_word = read_mem_word(mem, first_word)
+        new_word = to_symbolic(code_word_to_int(code)) << tail_bits
+        mask = mask_vector(head_bits, tail_bits)
+
+        mem[first_word] = simplify(origin_word & mask | new_word)
+    else:
+        # process the first word (may truncate at the beginning)
+        head_bits = (offset - first_word) * 8
+        num_bytes = first_word + 32 - offset
+
+        origin_word = read_mem_word(mem, first_word)
+        new_word = to_symbolic(code_word_to_int(code[:num_bytes * 2]))  # the first 'num_bytes' part of code
+        mask = mask_vector(head_bits, 0)
+
+        mem[first_word] = simplify(origin_word & mask | new_word)
+
+        # process the middle part (all full words)
+        word = first_word + 32
+        code_pos = num_bytes * 2  # copy starts at this index for code
+        while word < last_word:
+            new_word = to_symbolic(code_word_to_int(code[code_pos:code_pos + 64]))
+            mem[word] = simplify(new_word)
+
+            word += 32
+            code_pos += 64  # code is stored in hex str, so 1 word equals to 64 nibbles
+
+        # process the last word (may truncate at the end)
+        tail_bits = (last_word + 32 - offset - length) * 8
+
+        origin_word = read_mem_word(mem, last_word)
+        new_word = to_symbolic(code_word_to_int(code[code_pos:])) << tail_bits
+        mask = mask_vector(0, tail_bits)
+
+        mem[last_word] = simplify(origin_word & mask | new_word)
+
+
+def set_mem_data(mem, offset, length, data_offset, path_conditions_and_vars):
+    """Set memory, content is assumed to be input DATA.
+
+    :param mem:
+    :param offset: memory offset
+    :param length: data size
+    :param data_offset: calldata offset
+    :param path_conditions_and_vars:
+    :return:
+    """
+    assert 'path_condition' in path_conditions_and_vars, \
+        'Unsupported path_conditions_and_vars, path_conditions_and_vars = {}'.format(path_conditions_and_vars)
+
+    assert isAllReal(offset, length), \
+        'Error, offset, and length are not fully real, offset = {}, length = {}'.format(offset, length)
+
+    if isReal(data_offset):  # offset, length, and data_offset are all real
+        offset, length, data_offset = all_to_real(offset, length, data_offset)  # convert from BitVecVal() to int() or long()
+    else:
+        offset, length = all_to_real(offset, length)  # convert from BitVecVal() to int() or long()
+        data_offset = simplify(data_offset)
+
+    # first and last word (32 bytes) in memory that is to load (inclusive)
+    first_word = int(math.floor(float(offset) / 32))
+    last_word = int(math.floor((float(offset) + length - 1) / 32))
+    assert first_word <= last_word, 'Error, first_word > last_word, first_word = {}, last_word = {}'. \
+        format(first_word, last_word)
+
+    if first_word == last_word:  # only at most 1 word to read (may truncate at both ends)
+        head_bits = (offset - first_word) * 8
+        tail_bits = (last_word + 32 - offset - length) * 8
+
+        origin_word = read_mem_word(mem, first_word)
+
+        new_word_name = gen.gen_data_var(data_offset, length)
+        if new_word_name in path_conditions_and_vars:
+            new_word = path_conditions_and_vars[new_word_name]
+        else:
+            new_word = BitVec(new_word_name, length * 8)  # BitVec size is length * 8
+            path_conditions_and_vars[new_word_name] = new_word
+        new_word = to_256_bits(new_word)  # extend data BitVec to 256 bits (at head)
+        new_word = simplify(new_word << tail_bits)  # NOTE: new_word is of sort BitVec(256)
+
+        mask = mask_vector(head_bits, tail_bits)
+        mem[first_word] = simplify(origin_word & mask | new_word)
+    else:
+        # process the first word (may truncate at the beginning)
+        head_bits = (offset - first_word) * 8
+        num_bytes = first_word + 32 - offset
+
+        origin_word = read_mem_word(mem, first_word)
+
+        new_word_name = gen.gen_data_var(data_offset, num_bytes)
+        if new_word_name in path_conditions_and_vars:
+            new_word = path_conditions_and_vars[new_word_name]
+        else:
+            new_word = BitVec(new_word_name, num_bytes * 8)  # BitVec size is num_bytes * 8
+            path_conditions_and_vars[new_word_name] = new_word
+        new_word = to_256_bits(new_word)  # extend data BitVec to 256 bits (at head)
+
+        mask = mask_vector(head_bits, 0)
+        mem[first_word] = simplify(origin_word & mask | new_word)
+
+        # process the middle part (all full words)
+        word = first_word + 32
+        data_pos = data_offset + num_bytes # copy starts at this index for data
+        while word < last_word:
+            new_word_name = gen.gen_data_var(data_pos, 32)
+            if new_word_name in path_conditions_and_vars:
+                new_word = path_conditions_and_vars[new_word_name]
+            else:
+                new_word = BitVec(new_word_name, 256)
+                path_conditions_and_vars[new_word_name] = new_word
+
+            mem[word] = new_word
+
+            word += 32
+            data_pos += 32
+
+        # process the last word (may truncate at the end)
+        tail_bits = (last_word + 32 - offset - length) * 8
+        num_bytes = offset + length - last_word
+
+        origin_word = read_mem_word(mem, last_word)
+
+        new_word_name = gen.gen_data_var(data_pos, num_bytes)
+        if new_word_name in path_conditions_and_vars:
+            new_word = path_conditions_and_vars[new_word_name]
+        else:
+            new_word = BitVec(new_word_name, num_bytes * 8)  # BitVec size is num_bytes * 8
+            path_conditions_and_vars[new_word_name] = new_word
+        new_word = to_256_bits(new_word, extend_at_tail=True)  # extend data BitVec to 256 bits (at tail)
+
+        mask = mask_vector(0, tail_bits)
+        mem[last_word] = simplify(origin_word & mask | new_word)
 
 
 def full_sym_exec():
@@ -783,7 +1031,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     if len(g_trace) == 0:  # Reach end of this trace
         print_path_condition_and_vars(params)
 
-    print 'PC={}, opcode={}'.format(g_trace[0], opcode)
+    # print 'PC={}, opcode={}'.format(g_trace[0], opcode)
 
     assert global_state["pc"] == g_trace[0], "Incorrect PC: {}, expected: {}".format(global_state["pc"], g_trace[0])
     g_trace.popleft()
@@ -1276,7 +1524,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 second = to_symbolic(second)
 
                 computed = second & (255 << (8 * byte_index))
-                computed = computed >> (8 * byte_index)  # remove boundary condition check
+                computed = LShR(computed, (8 * byte_index))  # remove boundary condition check
 
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
@@ -1331,7 +1579,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     #     word += 32
 
                     sha3_input = [str(value) for value in get_mem(mem, s0, s1)]
-                    var_origins[new_var_name] = ("SHA3({})".format("; ".join(sha3_input)), global_state["pc"] - 1)
+                    var_origins[new_var_name] = ("SHA3({})".format(" | ".join(sha3_input)), global_state["pc"] - 1)
             else:
                 # push into the execution a fresh symbolic variable
                 new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
@@ -1417,31 +1665,36 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             calldata_from = stack.pop(0)
             no_bytes = stack.pop(0)
 
-            if isAllReal(mem_location, calldata_from, no_bytes):
-                mem_location, calldata_from, no_bytes = all_to_real(mem_location, calldata_from, no_bytes)  # convert from BitVecVal() to int() or long()
+            # if isAllReal(mem_location, calldata_from, no_bytes):
+            #     # mem_location, calldata_from, no_bytes = all_to_real(mem_location, calldata_from, no_bytes)  # convert from BitVecVal() to int() or long()
+            #     #
+            #     # assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CALLDATACOPY'.\
+            #     #     format(mem_location, global_state['pc'] - 1)
+            #     #
+            #     # # first and last word (32 bytes) in memory that is to load (inclusive)
+            #     # first_word = int(math.floor(float(mem_location) / 32))
+            #     # last_word = int(math.floor((float(mem_location) + no_bytes - 1) / 32))
+            #     # assert first_word <= last_word, \
+            #     #     "CALLDATACOPY: {}, {}; Wrong word index: {} > {}, PC={}".\
+            #     #         format(mem_location, no_bytes, first_word, last_word, global_state['pc'] - 1)
+            #     #
+            #     # word = first_word
+            #     # while word <= last_word:  # iterate through each memory word
+            #     #     new_var_name = gen.gen_data_var(calldata_from, 32)  # one word by word
+            #     #     if new_var_name in path_conditions_and_vars:
+            #     #         new_var = path_conditions_and_vars[new_var_name]
+            #     #     else:
+            #     #         new_var = BitVec(new_var_name, 256)
+            #     #         path_conditions_and_vars[new_var_name] = new_var
+            #     #     mem[word] = new_var
+            #     #
+            #     #     word += 1
+            #     #     calldata_from += 32  # move forward 32 bytes (1 word)
+            #
+            #     set_mem_data(mem, mem_location, no_bytes, calldata_from, path_conditions_and_vars)  # call a specific function to set memory content
 
-                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CALLDATACOPY'.\
-                    format(mem_location, global_state['pc'] - 1)
-
-                # first and last word (32 bytes) in memory that is to load (inclusive)
-                first_word = int(math.floor(float(mem_location) / 32))
-                last_word = int(math.floor((float(mem_location) + no_bytes - 1) / 32))
-                assert first_word <= last_word, \
-                    "CALLDATACOPY: {}, {}; Wrong word index: {} > {}, PC={}".\
-                        format(mem_location, no_bytes, first_word, last_word, global_state['pc'] - 1)
-
-                word = first_word
-                while word <= last_word:  # iterate through each memory word
-                    new_var_name = gen.gen_data_var(calldata_from, 32)  # one word by word
-                    if new_var_name in path_conditions_and_vars:
-                        new_var = path_conditions_and_vars[new_var_name]
-                    else:
-                        new_var = BitVec(new_var_name, 256)
-                        path_conditions_and_vars[new_var_name] = new_var
-                    mem[word] = new_var
-
-                    word += 1
-                    calldata_from += 32  # move forward 32 bytes (1 word)
+            if isAllReal(mem_location, no_bytes):
+                set_mem_data(mem, mem_location, no_bytes, calldata_from, path_conditions_and_vars)  # call a specific function to set memory content
             elif isReal(mem_location):
                 mem_location = to_real(mem_location)  # convert from BitVecVal() to int() or long()
 
@@ -1480,8 +1733,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if isAllReal(mem_location, code_from, no_bytes):
                 mem_location, code_from, no_bytes = all_to_real(mem_location, code_from, no_bytes)  # convert from BitVecVal() to int() or long()
 
-                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CODECOPY'. \
-                    format(mem_location, global_state['pc'] - 1)
+                # assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CODECOPY'. \
+                #     format(mem_location, global_state['pc'] - 1)
 
                 if g_disasm_file.endswith('.disasm'):
                     evm_file_name = g_disasm_file[:-7]
@@ -1493,18 +1746,20 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                     end = start + no_bytes * 2
                     code = evm[start: end]
 
-                mem[mem_location] = code  # memory modeled as a dict
+                # mem[mem_location] = code  # memory modeled as a dict
+                set_mem_code(mem, mem_location, no_bytes, code)  # call a specific function to set memory content
             else:
-                new_var_name = gen.gen_code_var("Ia", code_from, no_bytes)
-                if new_var_name in path_conditions_and_vars:
-                    new_var = path_conditions_and_vars[new_var_name]
-                else:
-                    new_var = BitVec(new_var_name, 256)  # this may not be 256 bits, too naive
-                    path_conditions_and_vars[new_var_name] = new_var
-
-                mem.clear()  # very conservative
-                print '{}: PC={}'.format('CODECOPY', global_state["pc"] - 1)
-                mem[str(mem_location)] = new_var
+                raise NotImplementedError
+                # new_var_name = gen.gen_code_var("Ia", code_from, no_bytes)
+                # if new_var_name in path_conditions_and_vars:
+                #     new_var = path_conditions_and_vars[new_var_name]
+                # else:
+                #     new_var = BitVec(new_var_name, 256)  # this may not be 256 bits, too naive
+                #     path_conditions_and_vars[new_var_name] = new_var
+                #
+                # mem.clear()  # very conservative
+                # # print '{}: PC={}'.format('CODECOPY', global_state["pc"] - 1)
+                # mem[str(mem_location)] = new_var
         else:
             raise ValueError('STACK underflow')
     elif opcode == "RETURNDATACOPY":
@@ -1514,6 +1769,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             stack.pop(0)
             stack.pop(0)
             stack.pop(0)
+
+            raise NotImplementedError
         else:
             raise ValueError('STACK underflow')
     elif opcode == "RETURNDATASIZE":
@@ -1557,25 +1814,28 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if isAllReal(address, mem_location, code_from, no_bytes) and USE_GLOBAL_BLOCKCHAIN:
                 address, mem_location, code_from, no_bytes = all_to_real(address, mem_location, code_from, no_bytes)  # convert from BitVecVal() to int() or long()
 
-                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, EXTCODECOPY'. \
-                    format(mem_location, global_state['pc'] - 1)
+                # assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, EXTCODECOPY'. \
+                #     format(mem_location, global_state['pc'] - 1)
 
                 evm = data_source.getCode(address)
                 start = code_from * 2
                 end = start + no_bytes * 2
                 code = evm[start: end]
-                mem[mem_location] = int(code, 16)
-            else:
-                new_var_name = gen.gen_code_var(address, code_from, no_bytes)
-                if new_var_name in path_conditions_and_vars:
-                    new_var = path_conditions_and_vars[new_var_name]
-                else:
-                    new_var = BitVec(new_var_name, 256)  # may not be 256 bits, too naive
-                    path_conditions_and_vars[new_var_name] = new_var
 
-                mem.clear()  # very conservative
-                print '{}: PC={}'.format('EXTCODECOPY', global_state["pc"] - 1)
-                mem[str(mem_location)] = new_var
+                # mem[mem_location] = int(code, 16)
+                set_mem_code(mem, mem_location, no_bytes, code)  # call a specific function to set memory content
+            else:
+                raise NotImplementedError
+                # new_var_name = gen.gen_code_var(address, code_from, no_bytes)
+                # if new_var_name in path_conditions_and_vars:
+                #     new_var = path_conditions_and_vars[new_var_name]
+                # else:
+                #     new_var = BitVec(new_var_name, 256)  # may not be 256 bits, too naive
+                #     path_conditions_and_vars[new_var_name] = new_var
+                #
+                # mem.clear()  # very conservative
+                # # print '{}: PC={}'.format('EXTCODECOPY', global_state["pc"] - 1)
+                # mem[str(mem_location)] = new_var
         else:
             raise ValueError('STACK underflow')
     elif opcode == "RETURNDATASIZE":
@@ -1627,31 +1887,39 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             global_state["pc"] = global_state["pc"] + 1
             address = stack.pop(0)
 
-            if isReal(address) and to_real(address) in mem:
+            if isReal(address):
                 address = to_real(address)  # convert from BitVecVal() to int() or long()
 
-                # assert address % 32 == 0, 'Memory location not aligned: {}, PC={}, MLOAD'. \
-                #     format(address, global_state['pc'] - 1)
-
                 value = read_mem_word(mem, address)
-                # value = mem[address]
                 stack.insert(0, value)
             else:
-                # print '{}, PC={}, mem={}'.format('MLOAD', global_state['pc'] - 1, mem)
+                raise NotImplementedError
 
-                new_var_name = gen.gen_mem_var(address)
-                if new_var_name in path_conditions_and_vars:
-                    new_var = path_conditions_and_vars[new_var_name]
-                else:
-                    new_var = BitVec(new_var_name, 256)
-                    path_conditions_and_vars[new_var_name] = new_var
-                stack.insert(0, new_var)
-                if isReal(address):
-                    address = to_real(address)
-
-                    mem[address] = new_var
-                else:
-                    mem[str(address)] = new_var
+            # if isReal(address) and to_real(address) in mem:
+            #     address = to_real(address)  # convert from BitVecVal() to int() or long()
+            #
+            #     # assert address % 32 == 0, 'Memory location not aligned: {}, PC={}, MLOAD'. \
+            #     #     format(address, global_state['pc'] - 1)
+            #
+            #     value = read_mem_word(mem, address)
+            #     # value = mem[address]
+            #     stack.insert(0, value)
+            # else:
+            #     # print '{}, PC={}, mem={}'.format('MLOAD', global_state['pc'] - 1, mem)
+            #
+            #     new_var_name = gen.gen_mem_var(address)
+            #     if new_var_name in path_conditions_and_vars:
+            #         new_var = path_conditions_and_vars[new_var_name]
+            #     else:
+            #         new_var = BitVec(new_var_name, 256)
+            #         path_conditions_and_vars[new_var_name] = new_var
+            #     stack.insert(0, new_var)
+            #     if isReal(address):
+            #         address = to_real(address)
+            #
+            #         mem[address] = new_var
+            #     else:
+            #         mem[str(address)] = new_var
         else:
             raise ValueError('STACK underflow')
     elif opcode == "MSTORE":
@@ -1660,9 +1928,20 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             stored_address = stack.pop(0)
             stored_value = stack.pop(0)
 
-            if isReal(stored_address):
-                stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
+            # if isReal(stored_address):
+            #     stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
+            #
+            #     # preparing data for hashing later
+            #     old_size = len(memory) // 32
+            #     new_size = ceil32(stored_address + 32) // 32
+            #     mem_extend = (new_size - old_size) * 32
+            #     memory.extend([0] * mem_extend)  # memory initialize to all 0
+            #     value = stored_value
+            #     for i in range(31, -1, -1):  # 31, 30, ..., 1, 0
+            #         memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
+            #         value /= 256
 
+            if isReal(stored_address):
                 stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
 
                 # preparing data for hashing later
@@ -1674,47 +1953,50 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 for i in range(31, -1, -1):  # 31, 30, ..., 1, 0
                     memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
                     value /= 256
-            if isReal(stored_address):
-                stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
 
-                if stored_address % 32 == 0:  # stored_address aligned in words
-                    mem[stored_address] = stored_value  # note that the stored_value could be symbolic
-                else:  # stored_address not aligned in words (i.e., access starting from the middle of word)
-                    # update conflict words (i.e., words that my overlap)
-                    precede_word = int(math.floor(float(stored_address) / 32))
-                    succeed_word = int(math.ceil(float(stored_address) / 32))
-                    assert precede_word + 1 == succeed_word, 'incorrect word address, {} + 1 != {}'.\
-                        format(precede_word, succeed_word)
+                write_mem_word(mem, stored_address, stored_value)  # call specific function
 
-                    precede_word = precede_word * 32
-                    succeed_word = succeed_word * 32
-                    if precede_word in mem or long(precede_word) in mem:  # update precede word
-                        offset_bits = (stored_address - precede_word) * 8
-                        overlap_bits = (precede_word + 32 - stored_address) * 8
-
-                        origin_value = mem[precede_word] if precede_word in mem else mem[long(precede_word)]
-                        new_value = ((origin_value >> overlap_bits) << overlap_bits) | (stored_value >> offset_bits)
-                        mem[precede_word] = simplify(new_value) if is_expr(new_value) else new_value
-                    else:
-                        offset_bits = (stored_address - precede_word) * 8
-                        truncated = stored_value >> offset_bits
-                        mem[precede_word] = simplify(truncated) if is_expr(truncated) else truncated
-
-                    if succeed_word in mem or long(succeed_word) in mem:  # update succeed word
-                        offset_bits = (stored_address - precede_word) * 8
-                        overlap_bits = (precede_word + 32 - stored_address) * 8
-
-                        origin_value = mem[succeed_word] if succeed_word in mem else mem[long(succeed_word)]
-                        new_value = ((origin_value << offset_bits) >> offset_bits) | (stored_value << overlap_bits)
-                        mem[succeed_word] = simplify(new_value) if is_expr(new_value) else new_value
-                    else:
-                        overlap_bits = (precede_word + 32 - stored_address) * 8
-                        truncated = stored_value << overlap_bits
-                        mem[succeed_word] = simplify(truncated) if is_expr(truncated) else truncated
+                # stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
+                #
+                # if stored_address % 32 == 0:  # stored_address aligned in words
+                #     mem[stored_address] = stored_value  # note that the stored_value could be symbolic
+                # else:  # stored_address not aligned in words (i.e., access starting from the middle of word)
+                #     # update conflict words (i.e., words that my overlap)
+                #     precede_word = int(math.floor(float(stored_address) / 32))
+                #     succeed_word = int(math.ceil(float(stored_address) / 32))
+                #     assert precede_word + 1 == succeed_word, 'incorrect word address, {} + 1 != {}'.\
+                #         format(precede_word, succeed_word)
+                #
+                #     precede_word = precede_word * 32
+                #     succeed_word = succeed_word * 32
+                #     if precede_word in mem or long(precede_word) in mem:  # update precede word
+                #         offset_bits = (stored_address - precede_word) * 8
+                #         overlap_bits = (precede_word + 32 - stored_address) * 8
+                #
+                #         origin_value = mem[precede_word] if precede_word in mem else mem[long(precede_word)]
+                #         new_value = ((origin_value >> overlap_bits) << overlap_bits) | (stored_value >> offset_bits)
+                #         mem[precede_word] = simplify(new_value) if is_expr(new_value) else new_value
+                #     else:
+                #         offset_bits = (stored_address - precede_word) * 8
+                #         truncated = stored_value >> offset_bits
+                #         mem[precede_word] = simplify(truncated) if is_expr(truncated) else truncated
+                #
+                #     if succeed_word in mem or long(succeed_word) in mem:  # update succeed word
+                #         offset_bits = (stored_address - precede_word) * 8
+                #         overlap_bits = (precede_word + 32 - stored_address) * 8
+                #
+                #         origin_value = mem[succeed_word] if succeed_word in mem else mem[long(succeed_word)]
+                #         new_value = ((origin_value << offset_bits) >> offset_bits) | (stored_value << overlap_bits)
+                #         mem[succeed_word] = simplify(new_value) if is_expr(new_value) else new_value
+                #     else:
+                #         overlap_bits = (precede_word + 32 - stored_address) * 8
+                #         truncated = stored_value << overlap_bits
+                #         mem[succeed_word] = simplify(truncated) if is_expr(truncated) else truncated
             else:
-                mem.clear()  # very conservative
-                print '{}: PC={}, stored_address={}'.format('MSTORE', global_state["pc"] - 1, stored_address)
-                mem[str(stored_address)] = stored_value
+                raise NotImplementedError
+                # mem.clear()  # very conservative
+                # # print '{}: PC={}, stored_address={}'.format('MSTORE', global_state["pc"] - 1, stored_address)
+                # mem[str(stored_address)] = stored_value
         else:
             raise ValueError('STACK underflow')
     elif opcode == "MSTORE8":
@@ -1727,14 +2009,17 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if isReal(stored_address):
                 stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
 
-                assert stored_address % 32 == 0, 'Memory location not aligned: {}, PC={}, MSTORE8'. \
-                    format(stored_address, global_state['pc'] - 1)
+                # assert stored_address % 32 == 0, 'Memory location not aligned: {}, PC={}, MSTORE8'. \
+                #     format(stored_address, global_state['pc'] - 1)
+                #
+                # mem[stored_address] = stored_value  # note that the stored_value could be symbolic
 
-                mem[stored_address] = stored_value  # note that the stored_value could be symbolic
+                write_mem_byte(mem, stored_address, stored_value)  # call a specific function to write memory in a word
             else:
-                mem.clear()  # very conservative
-                print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
-                mem[str(stored_address)] = stored_value
+                raise NotImplementedError
+                # mem.clear()  # very conservative
+                # # print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
+                # mem[str(stored_address)] = stored_value
         else:
             raise ValueError('STACK underflow')
     elif opcode == "SLOAD":

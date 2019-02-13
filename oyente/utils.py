@@ -27,7 +27,7 @@ def isSymbolic(value):
 
 def isReal(value):
     # return isinstance(value, six.integer_types)
-    return is_bv_value(value) or isinstance(value, six.integer_types)
+    return isinstance(value, six.integer_types) or is_bv_value(simplify(value))
 
 
 def isAllReal(*args):
@@ -40,7 +40,7 @@ def isAllReal(*args):
 def to_real(number):
     if isinstance(number, six.integer_types):
         return number
-    return number.as_long()
+    return simplify(number).as_long()
 
 
 def all_to_real(*args):
@@ -55,6 +55,13 @@ def to_symbolic(number):
     if isinstance(number, six.integer_types):
         return BitVecVal(number, 256)
     return number
+
+
+def to_256_bits(value, extend_at_tail=False):
+    if extend_at_tail:
+        return Concat(value, BitVecVal(0, 256 - value.size()))
+    else:
+        return Concat(BitVecVal(0, 256 - value.size()), value)
 
 
 def to_unsigned(number):

@@ -1,4 +1,5 @@
-from utils import isReal
+from utils import isReal, to_real
+from z3 import *
 
 
 class Generator:
@@ -11,8 +12,8 @@ class Generator:
         return "s[{}]".format(str(self.countstack))
 
     def gen_data_var(self, offset, length):
-        return "Id[{}: {}]".format(str(offset) if isReal(offset) else '({})'.format(offset),
-                                  str(length) if isReal(length) else '({})'.format(length))
+        return "Id[{}; {}]".format(str(to_real(offset)) if isReal(offset) else '({})'.format(simplify(offset)),
+                                  str(to_real(length)) if isReal(length) else '({})'.format(simplify(length)))
 
     def gen_data_size(self):
         return "Id_size"
@@ -52,9 +53,9 @@ class Generator:
         return "balance[{}]".format(str(self.count))
 
     def gen_code_var(self, address, offset, length):
-        return "code[{}][{}: {}]".format(str(address) if isReal(address) else '({})'.format(address),
-                                        str(offset) if isReal(offset) else '({})'.format(offset),
-                                        str(length) if isReal(length) else '({})'.format(length))
+        return "code[{}][{}; {}]".format(str(to_real(address)) if isReal(address) else '({})'.format(simplify(address)),
+                                        str(to_real(offset)) if isReal(offset) else '({})'.format(simplify(offset)),
+                                        str(to_real(length)) if isReal(length) else '({})'.format(simplify(length)))
 
     def gen_code_size_var(self, address):
         return "code_size[{}]".format(str(address))
