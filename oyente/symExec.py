@@ -1642,7 +1642,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 new_var = BitVec(new_var_name, 256)
                 path_conditions_and_vars[new_var_name] = new_var
 
-            # print 'PC={}, position={}'.format(global_state['pc'] - 1, position)
+            # print 'CALLDATALOAD, PC={}, position={}'.format(global_state['pc'] - 1, position)
             # print new_var_name
 
             stack.insert(0, new_var)
@@ -1664,6 +1664,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             mem_location = stack.pop(0)
             calldata_from = stack.pop(0)
             no_bytes = stack.pop(0)
+
+            # print 'CALLDATACOPY, PC={}, mem_location = {}, calldata_from = {}, no_bytes = {}'.format(global_state['pc'] - 1, mem_location, calldata_from, no_bytes)
 
             # if isAllReal(mem_location, calldata_from, no_bytes):
             #     # mem_location, calldata_from, no_bytes = all_to_real(mem_location, calldata_from, no_bytes)  # convert from BitVecVal() to int() or long()
@@ -1695,19 +1697,19 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
 
             if isAllReal(mem_location, no_bytes):
                 set_mem_data(mem, mem_location, no_bytes, calldata_from, path_conditions_and_vars)  # call a specific function to set memory content
-            elif isReal(mem_location):
-                mem_location = to_real(mem_location)  # convert from BitVecVal() to int() or long()
-
-                assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CALLDATACOPY'. \
-                    format(mem_location, global_state['pc'] - 1)
-
-                new_var_name = gen.gen_data_var(calldata_from, no_bytes)
-                if new_var_name in path_conditions_and_vars:
-                    new_var = path_conditions_and_vars[new_var_name]
-                else:
-                    new_var = BitVec(new_var_name, 256)  # modeled as a 256 bits variable, not precise
-                    path_conditions_and_vars[new_var_name] = new_var
-                mem[mem_location] = new_var
+            # elif isReal(mem_location):
+            #     mem_location = to_real(mem_location)  # convert from BitVecVal() to int() or long()
+            #
+            #     assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CALLDATACOPY'. \
+            #         format(mem_location, global_state['pc'] - 1)
+            #
+            #     new_var_name = gen.gen_data_var(calldata_from, no_bytes)
+            #     if new_var_name in path_conditions_and_vars:
+            #         new_var = path_conditions_and_vars[new_var_name]
+            #     else:
+            #         new_var = BitVec(new_var_name, 256)  # modeled as a 256 bits variable, not precise
+            #         path_conditions_and_vars[new_var_name] = new_var
+            #     mem[mem_location] = new_var
             else:
                 raise NotImplementedError
         else:
@@ -1941,6 +1943,12 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             #         memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
             #         value /= 256
 
+            # print 'MSTORE, stored_address = {}, stored_value = {}, PC = {}'.format(stored_address, stored_value,
+            #                                                                        global_state['pc'] - 1)
+            # print 'mem before: {}'.format(mem)
+            # for value in mem.values():
+            #     assert isReal(value) or value.sort() == BitVecSort(256)
+
             if isReal(stored_address):
                 stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
 
@@ -1993,10 +2001,16 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 #         truncated = stored_value << overlap_bits
                 #         mem[succeed_word] = simplify(truncated) if is_expr(truncated) else truncated
             else:
-                raise NotImplementedError
+                if isZero(stored_value):
+                    pass
+                else:
+                    raise NotImplementedError
                 # mem.clear()  # very conservative
                 # # print '{}: PC={}, stored_address={}'.format('MSTORE', global_state["pc"] - 1, stored_address)
                 # mem[str(stored_address)] = stored_value
+
+            # print 'mem after: {}'.format(mem)
+            # print ''
         else:
             raise ValueError('STACK underflow')
     elif opcode == "MSTORE8":

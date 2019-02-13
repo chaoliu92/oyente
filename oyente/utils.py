@@ -37,6 +37,12 @@ def isAllReal(*args):
     return True
 
 
+def isZero(value):
+    if isSymbolic(value):
+        return False
+    return to_real(value) == 0
+
+
 def to_real(number):
     if isinstance(number, six.integer_types):
         return number
