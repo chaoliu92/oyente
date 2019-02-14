@@ -744,6 +744,7 @@ def set_mem_code(mem, offset, length, code):
         i = 0
         for b in code:
             i = i * 256 + b
+        return i
 
     if first_word == last_word:  # only at most 1 word to read (may truncate at both ends)
         head_bits = (offset - first_word) * 8
@@ -925,12 +926,12 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
 
     assert block == g_trace[0], "Entering incorrect block: {}, expected: {}".format(block, g_trace[0])
 
-    current_edge = Edge(pre_block, block)
-    if current_edge in visited_edges:
-        updated_count_number = visited_edges[current_edge] + 1
-        visited_edges.update({current_edge: updated_count_number})
-    else:
-        visited_edges.update({current_edge: 1})
+    # current_edge = Edge(pre_block, block)
+    # if current_edge in visited_edges:
+    #     updated_count_number = visited_edges[current_edge] + 1
+    #     visited_edges.update({current_edge: updated_count_number})
+    # else:
+    #     visited_edges.update({current_edge: 1})
 
     # Execute every instruction, one at a time
     try:
@@ -941,15 +942,14 @@ def sym_exec_block(params, block, pre_block, depth, func_call, current_func_name
     for instr in block_ins:
         sym_exec_ins(params, block, instr, func_call, current_func_name)
 
-    # Mark that this basic block in the visited blocks
-    visited.append(block)
-    depth += 1
+    # # Mark that this basic block in the visited blocks
+    # visited.append(block)
 
     if len(g_trace) == 0:  # Reach end of this trace
         print_path_condition_and_vars(params)
 
     # Go to next Basic Block(s)
-    if jump_type[block] == "terminal" or depth > global_params.DEPTH_LIMIT:
+    if jump_type[block] == "terminal":
         global total_no_of_paths
         global no_of_test_cases
 
@@ -1031,7 +1031,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     if len(g_trace) == 0:  # Reach end of this trace
         print_path_condition_and_vars(params)
 
-    # print 'PC={}, opcode={}'.format(g_trace[0], opcode)
+    # print 'PC = {}, opcode = {}'.format(g_trace[0], opcode)
 
     assert global_state["pc"] == g_trace[0], "Incorrect PC: {}, expected: {}".format(global_state["pc"], g_trace[0])
     g_trace.popleft()

@@ -28,10 +28,12 @@ def test_trace(root_dir, trace, code):
         path_condition_and_vars_sep = '============ Path Conditions and Variables ==========='
         path_condition_sep = '============ Path Condition ==========='
         variables_sep = '============ Variables ==========='
+        path_condition_origins_sep = '============ Path Condition Origins ==========='
         var_origins_sep = '============ Variable Origins ==========='
 
         lines = [line.strip() for line in stdout.split('\n') if not line.strip() == '']
-        path_condition_and_vars_index = path_condition_index = variables_index = var_origins_index = 0
+        path_condition_and_vars_index = path_condition_index = variables_index = \
+            path_condition_origins_index = var_origins_index = 0
         for i, line in enumerate(lines):
             if line == path_condition_and_vars_sep:
                 path_condition_and_vars_index = i
@@ -39,13 +41,16 @@ def test_trace(root_dir, trace, code):
                 path_condition_index = i
             elif line == variables_sep:
                 variables_index = i
+            elif line == path_condition_origins_sep:
+                path_condition_origins_index = i
             elif line == var_origins_sep:
                 var_origins_index = i
 
         return {'trace': trace, 'code': code, 'succeed': True, 'info': 'OK',
                 'path_condition_and_vars': '\n'.join(lines[path_condition_and_vars_index + 1: path_condition_index]),
                 'path_condition': '\n'.join(lines[path_condition_index + 1: variables_index]),
-                'variables': '\n'.join(lines[variables_index + 1: var_origins_index]),
+                'variables': '\n'.join(lines[variables_index + 1: path_condition_origins_index]),
+                'path_condition_origins': '\n'.join(lines[path_condition_origins_index + 1: var_origins_index]),
                 'var_origins': '\n'.join(lines[var_origins_index + 1:])}
 
 
@@ -174,6 +179,13 @@ if __name__ == '__main__':
     # on_test_traces(9, 'test_traces', 'result')
 
     # show_results(0, 'result', 151, num_cases=1, only_exception=False)
-    # show_results(1, 'result', 0, num_cases=1, only_exception=True)
-    # show_results(2, 'result', 0, num_cases=1, only_exception=True)
+    show_results(0, 'result', 0, num_cases=1, only_exception=True)
+    show_results(1, 'result', 0, num_cases=1, only_exception=True)
+    show_results(2, 'result', 0, num_cases=1, only_exception=True)
     show_results(3, 'result', 0, num_cases=1, only_exception=True)
+    show_results(4, 'result', 0, num_cases=1, only_exception=True)
+    show_results(5, 'result', 0, num_cases=1, only_exception=True)
+    show_results(6, 'result', 0, num_cases=1, only_exception=True)
+    show_results(7, 'result', 0, num_cases=1, only_exception=True)
+    show_results(8, 'result', 0, num_cases=1, only_exception=True)
+    show_results(9, 'result', 0, num_cases=1, only_exception=True)
