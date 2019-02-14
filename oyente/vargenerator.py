@@ -13,7 +13,7 @@ class Generator:
 
     def gen_data_var(self, offset, length):
         return "Id[{}; {}]".format(str(to_real(offset)) if isReal(offset) else '({})'.format(simplify(offset)),
-                                  str(to_real(length)) if isReal(length) else '({})'.format(simplify(length)))
+                                   str(to_real(length)) if isReal(length) else '({})'.format(simplify(length)))
 
     def gen_data_size(self):
         return "Id_size"
@@ -54,8 +54,8 @@ class Generator:
 
     def gen_code_var(self, address, offset, length):
         return "code[{}][{}; {}]".format(str(to_real(address)) if isReal(address) else '({})'.format(simplify(address)),
-                                        str(to_real(offset)) if isReal(offset) else '({})'.format(simplify(offset)),
-                                        str(to_real(length)) if isReal(length) else '({})'.format(simplify(length)))
+                                         str(to_real(offset)) if isReal(offset) else '({})'.format(simplify(offset)),
+                                         str(to_real(length)) if isReal(length) else '({})'.format(simplify(length)))
 
     def gen_code_size_var(self, address):
         return "code_size[{}]".format(str(address))

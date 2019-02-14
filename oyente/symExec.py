@@ -49,7 +49,7 @@ class Parameter:
             "global_state": {},
             "path_conditions_and_vars": {},
             "var_origins": {},  # map "some_var_" (stemming from arbitrary vars) to its concrete or symbolic origin
-                                    # only in text form, not executable code (like Z3 statement)
+            # only in text form, not executable code (like Z3 statement)
             "path_condition_origins": []  # record PC and OPCODE when each path condition element is added
         }
         for (attr, default) in six.iteritems(attr_defaults):
@@ -582,14 +582,20 @@ def get_mem(mem, offset, length=32):
     :param length:
     :return:
     """
-    assert isAllReal(offset, length), 'Error, offset and length not fully real, offset = {}, length = {}'.\
+    assert isAllReal(offset, length), 'Error, offset and length not fully real, offset = {}, length = {}'. \
         format(str(offset), str(length))
 
     offset, length = all_to_real(offset, length)  # convert from BitVecVal() to int() or long()
 
+    if length == 0:  # return empty if read length is 0 (NOTE: empty is not equal to 0)
+        return ''
+
     first_word = int(math.floor(float(offset) / 32)) * 32
     last_word = int(math.floor((float(offset) + length - 1) / 32)) * 32
-    assert first_word <= last_word, 'Error, first_word > last_word, first_word = {}, last_word = {}'.\
+
+    # print 'offset = {}, length = {}, first_word = {}, last_word = {}'.format(offset, length, first_word, last_word)
+
+    assert first_word <= last_word, 'Error, first_word > last_word, first_word = {}, last_word = {}'. \
         format(first_word, last_word)
 
     if first_word == last_word:  # only at most 1 word to read (may truncate at both ends)
@@ -685,7 +691,8 @@ def write_mem_word(mem, offset, value):
             mem[precede_word] = simplify(new_value) if is_expr(new_value) else new_value
         else:
             offset_bits = (offset - precede_word) * 8
-            truncated = LShR(value, offset_bits)  # logical shift right, Note: >> is arithmetic shift right (i.e., signed)
+            truncated = LShR(value,
+                             offset_bits)  # logical shift right, Note: >> is arithmetic shift right (i.e., signed)
             mem[precede_word] = simplify(truncated) if is_expr(truncated) else truncated
 
         if succeed_word in mem or long(succeed_word) in mem:  # update succeed word
@@ -710,8 +717,8 @@ def mask_vector(head_bits, tail_bits):
     :return:
     """
     assert head_bits + tail_bits <= 256
-    head = simplify(to_symbolic(2**head_bits - 1) << (256 - head_bits))
-    tail = to_symbolic(2**tail_bits - 1)
+    head = simplify(to_symbolic(2 ** head_bits - 1) << (256 - head_bits))
+    tail = to_symbolic(2 ** tail_bits - 1)
     return simplify(head | tail)
 
 
@@ -803,7 +810,8 @@ def set_mem_data(mem, offset, length, data_offset, path_conditions_and_vars):
         'Error, offset, and length are not fully real, offset = {}, length = {}'.format(offset, length)
 
     if isReal(data_offset):  # offset, length, and data_offset are all real
-        offset, length, data_offset = all_to_real(offset, length, data_offset)  # convert from BitVecVal() to int() or long()
+        offset, length, data_offset = all_to_real(offset, length,
+                                                  data_offset)  # convert from BitVecVal() to int() or long()
     else:
         offset, length = all_to_real(offset, length)  # convert from BitVecVal() to int() or long()
         data_offset = simplify(data_offset)
@@ -851,7 +859,7 @@ def set_mem_data(mem, offset, length, data_offset, path_conditions_and_vars):
 
         # process the middle part (all full words)
         word = first_word + 32
-        data_pos = data_offset + num_bytes # copy starts at this index for data
+        data_pos = data_offset + num_bytes  # copy starts at this index for data
         while word < last_word:
             new_word_name = gen.gen_data_var(data_pos, 32)
             if new_word_name in path_conditions_and_vars:
@@ -1066,7 +1074,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             else:
                 # both are real and we need to manually modulus with 2 ** 256
                 # if both are symbolic z3 takes care of modulus automatically
-                computed = (first + second) % (2 ** 256)  # if is concrete, the result type is long (suffix "L" in str like "32L") instead of int
+                computed = (first + second) % (
+                        2 ** 256)  # if is concrete, the result type is long (suffix "L" in str like "32L") instead of int
             computed = simplify(computed) if is_expr(computed) else computed
             stack.insert(0, computed)
 
@@ -1298,7 +1307,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 # The computed value is unknown, this is because power is
                 # not supported in bit-vector theory
                 new_var_name = gen.gen_arbitrary_var()
-                var_origins[new_var_name] = ("EXP({}, {})".format(str(base), str(exponent)), global_state["pc"] - 1)  # mark origin
+                var_origins[new_var_name] = (
+                    "EXP({}, {})".format(str(base), str(exponent)), global_state["pc"] - 1)  # mark origin
 
                 computed = BitVec(new_var_name, 256)
             computed = simplify(computed) if is_expr(computed) else computed
@@ -1335,11 +1345,11 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         else:
             raise ValueError('STACK underflow')
     elif opcode == "SHL":
-        raise NotImplementedError
+        raise NotImplementedError('SHL is not supported currently')
     elif opcode == "SHR":
-        raise NotImplementedError
+        raise NotImplementedError('SHR is not supported currently')
     elif opcode == "SAR":
-        raise NotImplementedError
+        raise NotImplementedError('SAR is not supported currently')
     #
     #  10s: Comparison and Bitwise Logic Operations
     #
@@ -1541,53 +1551,28 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             if isAllReal(s0, s1):
                 s0, s1 = all_to_real(s0, s1)  # convert from BitVecVal() to int() or long()
 
-                # simulate the hashing of sha3, use an arbitrary function
-                data = [str(x) for x in memory[s0: s0 + s1]]
-                position = ''.join(data)  # convert byte (char) list to a complete str
-                position = re.sub('[\s+]', '', position)  # remove blanks
-                position = zlib.compress(six.b(position), 9)
-                position = base64.b64encode(position)
-                position = position.decode('utf-8', 'strict')
-                if position in sha3_list:
-                    stack.insert(0, sha3_list[position])
+                sha3_input = [str(value) for value in get_mem(mem, s0, s1)]  # get SHA3 input in symbolic form
+                sha3_key = "SHA3({})".format(
+                    " | ".join(sha3_input))  # unique key for sha3_list, represent as a symbolic expression
+
+                if sha3_key in sha3_list:
+                    new_var = sha3_list[sha3_key]
                 else:
-                    new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
+                    new_var_name = gen.gen_arbitrary_var()  # use a new symbol
                     new_var = BitVec(new_var_name, 256)
-                    sha3_list[position] = new_var
-                    stack.insert(0, new_var)
+                    sha3_list[sha3_key] = new_var
+                    var_origins[new_var_name] = (sha3_key, global_state["pc"] - 1)
 
-                    # # record value origins
-                    # sha3_input = []  # input of SHA3, list of concrete or symbolic value
-                    # # first and last word address (multiple of 32 bytes) in memory that is to read (inclusive)
-                    # first_word = int(math.floor(float(s0) / 32)) * 32
-                    # last_word = int(math.floor((float(s0) + s1 - 1) / 32)) * 32
-                    # assert first_word <= last_word, \
-                    #     "SHA3: {}, {}; Wrong word index: {} > {}, PC = {}".\
-                    #         format(s0, s1, first_word, last_word, global_state['pc'] - 1)
-                    #
-                    # # process middle words (full word size, i.e., multiple of 32 bytes)
-                    # word = first_word
-                    # while word <= last_word:  # iterate through each input word
-                    #     if word in mem:  # type(word) = int
-                    #         sha3_input.append(str(mem[word]))
-                    #     elif long(word) in mem:  # in case we have long type address other than int type
-                    #         sha3_input.append(str(mem[long(word)]))
-                    #     else:
-                    #         # TODO account for byte value
-                    #         sha3_input.append(str(BitVecVal(0, 256)))  # memory initialized to all zero
-                    #         # raise NotImplementedError(word, mem)
-                    #     word += 32
-
-                    sha3_input = [str(value) for value in get_mem(mem, s0, s1)]
-                    var_origins[new_var_name] = ("SHA3({})".format(" | ".join(sha3_input)), global_state["pc"] - 1)
-            else:
-                # push into the execution a fresh symbolic variable
-                new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
-                var_origins[new_var_name] = ("SHA3(mem[{}: {}])".format(str(s0), str(s0 + s1)), global_state["pc"] - 1)
-
-                new_var = BitVec(new_var_name, 256)
-                path_conditions_and_vars[new_var_name] = new_var
                 stack.insert(0, new_var)
+            else:
+                raise NotImplementedError('SHA3, s0 and s1 are not fully real, s0 = {}, s1 = {}'.format(s0, s1))
+                # # push into the execution a fresh symbolic variable
+                # new_var_name = gen.gen_arbitrary_var()  # use an arbitrary variable, lead to lose of information
+                # var_origins[new_var_name] = ("SHA3(mem[{}: {}])".format(str(s0), str(s0 + s1)), global_state["pc"] - 1)
+                #
+                # new_var = BitVec(new_var_name, 256)
+                # path_conditions_and_vars[new_var_name] = new_var
+                # stack.insert(0, new_var)
         else:
             raise ValueError('STACK underflow')
     #
@@ -1696,7 +1681,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             #     set_mem_data(mem, mem_location, no_bytes, calldata_from, path_conditions_and_vars)  # call a specific function to set memory content
 
             if isAllReal(mem_location, no_bytes):
-                set_mem_data(mem, mem_location, no_bytes, calldata_from, path_conditions_and_vars)  # call a specific function to set memory content
+                set_mem_data(mem, mem_location, no_bytes, calldata_from,
+                             path_conditions_and_vars)  # call a specific function to set memory content
             # elif isReal(mem_location):
             #     mem_location = to_real(mem_location)  # convert from BitVecVal() to int() or long()
             #
@@ -1711,7 +1697,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             #         path_conditions_and_vars[new_var_name] = new_var
             #     mem[mem_location] = new_var
             else:
-                raise NotImplementedError
+                raise NotImplementedError(
+                    'CALLDATACOPY, mem_location and no_bytes are not fully real, mem_location = {}, no_bytes = {}'.
+                        format(mem_location, no_bytes))
         else:
             raise ValueError('STACK underflow')
     elif opcode == "CODESIZE":
@@ -1721,6 +1709,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             evm_file_name = g_disasm_file[:-7]
         else:
             evm_file_name = g_disasm_file
+
         with open(evm_file_name, 'r') as evm_file:
             evm = evm_file.read()[:-1]
             code_size = len(evm) / 2
@@ -1733,7 +1722,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             no_bytes = stack.pop(0)
 
             if isAllReal(mem_location, code_from, no_bytes):
-                mem_location, code_from, no_bytes = all_to_real(mem_location, code_from, no_bytes)  # convert from BitVecVal() to int() or long()
+                mem_location, code_from, no_bytes = all_to_real(mem_location, code_from,
+                                                                no_bytes)  # convert from BitVecVal() to int() or long()
 
                 # assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, CODECOPY'. \
                 #     format(mem_location, global_state['pc'] - 1)
@@ -1751,7 +1741,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 # mem[mem_location] = code  # memory modeled as a dict
                 set_mem_code(mem, mem_location, no_bytes, code)  # call a specific function to set memory content
             else:
-                raise NotImplementedError
+                raise NotImplementedError(
+                    'CODECOPY, mem_location, code_from, and no_bytes are not fully real, mem_location = {}, '
+                    'code_from = {}, no_bytes = {}'.format(mem_location, code_from, no_bytes))
                 # new_var_name = gen.gen_code_var("Ia", code_from, no_bytes)
                 # if new_var_name in path_conditions_and_vars:
                 #     new_var = path_conditions_and_vars[new_var_name]
@@ -1767,12 +1759,12 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     elif opcode == "RETURNDATACOPY":
         #  TODO: Don't know how to simulate this yet
         if len(stack) > 2:
-            global_state["pc"] += 1
-            stack.pop(0)
-            stack.pop(0)
-            stack.pop(0)
+            # global_state["pc"] += 1
+            # stack.pop(0)
+            # stack.pop(0)
+            # stack.pop(0)
 
-            raise NotImplementedError
+            raise NotImplementedError('RETURNDATACOPY is not supported currently')
         else:
             raise ValueError('STACK underflow')
     elif opcode == "RETURNDATASIZE":
@@ -1813,8 +1805,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             code_from = stack.pop(0)
             no_bytes = stack.pop(0)
 
-            if isAllReal(address, mem_location, code_from, no_bytes) and USE_GLOBAL_BLOCKCHAIN:
-                address, mem_location, code_from, no_bytes = all_to_real(address, mem_location, code_from, no_bytes)  # convert from BitVecVal() to int() or long()
+            if isAllReal(address, mem_location, code_from, no_bytes) and global_params.USE_GLOBAL_BLOCKCHAIN:
+                address, mem_location, code_from, no_bytes = all_to_real(address, mem_location, code_from,
+                                                                         no_bytes)  # convert from BitVecVal() to int() or long()
 
                 # assert mem_location % 32 == 0, 'Memory location not aligned: {}, PC={}, EXTCODECOPY'. \
                 #     format(mem_location, global_state['pc'] - 1)
@@ -1827,7 +1820,11 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 # mem[mem_location] = int(code, 16)
                 set_mem_code(mem, mem_location, no_bytes, code)  # call a specific function to set memory content
             else:
-                raise NotImplementedError
+                raise NotImplementedError(
+                    'EXTCODECOPY, address, mem_location, code_from, and no_bytes are not fully real, '
+                    'or GLOBAL_BLOCKCHAIN is not used, address = {}, mem_location = {}, code_from = {}, no_bytes = {}, '
+                    'USE_GLOBAL_BLOCKCHAIN = {}'.format(
+                        address, mem_location, code_from, no_bytes, global_params.USE_GLOBAL_BLOCKCHAIN))
                 # new_var_name = gen.gen_code_var(address, code_from, no_bytes)
                 # if new_var_name in path_conditions_and_vars:
                 #     new_var = path_conditions_and_vars[new_var_name]
@@ -1841,9 +1838,9 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         else:
             raise ValueError('STACK underflow')
     elif opcode == "RETURNDATASIZE":
-        raise NotImplementedError
+        raise NotImplementedError('RETURNDATASIZE is not supported currently')
     elif opcode == "RETURNDATACOPY":
-        raise NotImplementedError
+        raise NotImplementedError('RETURNDATACOPY is not supported currently')
     #
     #  40s: Block Information
     #
@@ -1895,7 +1892,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
                 value = read_mem_word(mem, address)
                 stack.insert(0, value)
             else:
-                raise NotImplementedError
+                raise NotImplementedError('MLOAD, address is not real, address = {}'.format(address))
 
             # if isReal(address) and to_real(address) in mem:
             #     address = to_real(address)  # convert from BitVecVal() to int() or long()
@@ -1930,81 +1927,30 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             stored_address = stack.pop(0)
             stored_value = stack.pop(0)
 
-            # if isReal(stored_address):
-            #     stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
-            #
-            #     # preparing data for hashing later
-            #     old_size = len(memory) // 32
-            #     new_size = ceil32(stored_address + 32) // 32
-            #     mem_extend = (new_size - old_size) * 32
-            #     memory.extend([0] * mem_extend)  # memory initialize to all 0
-            #     value = stored_value
-            #     for i in range(31, -1, -1):  # 31, 30, ..., 1, 0
-            #         memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
-            #         value /= 256
-
             # print 'MSTORE, stored_address = {}, stored_value = {}, PC = {}'.format(stored_address, stored_value,
             #                                                                        global_state['pc'] - 1)
-            # print 'mem before: {}'.format(mem)
-            # for value in mem.values():
-            #     assert isReal(value) or value.sort() == BitVecSort(256)
 
             if isReal(stored_address):
                 stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
 
-                # preparing data for hashing later
-                old_size = len(memory) // 32
-                new_size = ceil32(stored_address + 32) // 32
-                mem_extend = (new_size - old_size) * 32
-                memory.extend([0] * mem_extend)  # memory initialize to all 0
-                value = stored_value
-                for i in range(31, -1, -1):  # 31, 30, ..., 1, 0
-                    memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
-                    value /= 256
+                # # preparing data for hashing later
+                # old_size = len(memory) // 32
+                # new_size = ceil32(stored_address + 32) // 32
+                # mem_extend = (new_size - old_size) * 32
+                # memory.extend([0] * mem_extend)  # memory initialize to all 0
+                # value = stored_value
+                # for i in range(31, -1, -1):  # 31, 30, ..., 1, 0
+                #     memory[stored_address + i] = value % 256  # here value may be a symbol, not a concrete value
+                #     value /= 256
 
                 write_mem_word(mem, stored_address, stored_value)  # call specific function
-
-                # stored_address = to_real(stored_address)  # convert from BitVecVal() to int() or long()
-                #
-                # if stored_address % 32 == 0:  # stored_address aligned in words
-                #     mem[stored_address] = stored_value  # note that the stored_value could be symbolic
-                # else:  # stored_address not aligned in words (i.e., access starting from the middle of word)
-                #     # update conflict words (i.e., words that my overlap)
-                #     precede_word = int(math.floor(float(stored_address) / 32))
-                #     succeed_word = int(math.ceil(float(stored_address) / 32))
-                #     assert precede_word + 1 == succeed_word, 'incorrect word address, {} + 1 != {}'.\
-                #         format(precede_word, succeed_word)
-                #
-                #     precede_word = precede_word * 32
-                #     succeed_word = succeed_word * 32
-                #     if precede_word in mem or long(precede_word) in mem:  # update precede word
-                #         offset_bits = (stored_address - precede_word) * 8
-                #         overlap_bits = (precede_word + 32 - stored_address) * 8
-                #
-                #         origin_value = mem[precede_word] if precede_word in mem else mem[long(precede_word)]
-                #         new_value = ((origin_value >> overlap_bits) << overlap_bits) | (stored_value >> offset_bits)
-                #         mem[precede_word] = simplify(new_value) if is_expr(new_value) else new_value
-                #     else:
-                #         offset_bits = (stored_address - precede_word) * 8
-                #         truncated = stored_value >> offset_bits
-                #         mem[precede_word] = simplify(truncated) if is_expr(truncated) else truncated
-                #
-                #     if succeed_word in mem or long(succeed_word) in mem:  # update succeed word
-                #         offset_bits = (stored_address - precede_word) * 8
-                #         overlap_bits = (precede_word + 32 - stored_address) * 8
-                #
-                #         origin_value = mem[succeed_word] if succeed_word in mem else mem[long(succeed_word)]
-                #         new_value = ((origin_value << offset_bits) >> offset_bits) | (stored_value << overlap_bits)
-                #         mem[succeed_word] = simplify(new_value) if is_expr(new_value) else new_value
-                #     else:
-                #         overlap_bits = (precede_word + 32 - stored_address) * 8
-                #         truncated = stored_value << overlap_bits
-                #         mem[succeed_word] = simplify(truncated) if is_expr(truncated) else truncated
             else:
                 if isZero(stored_value):
                     pass
                 else:
-                    raise NotImplementedError
+                    raise NotImplementedError(
+                        'MSTORE, stored_address is not real, or stored_value is not 0, stored_address = {}, '
+                        'stored_value = {}'.format(stored_address, stored_value))
                 # mem.clear()  # very conservative
                 # # print '{}: PC={}, stored_address={}'.format('MSTORE', global_state["pc"] - 1, stored_address)
                 # mem[str(stored_address)] = stored_value
@@ -2030,7 +1976,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
 
                 write_mem_byte(mem, stored_address, stored_value)  # call a specific function to write memory in a word
             else:
-                raise NotImplementedError
+                raise NotImplementedError(
+                    'MSTORE8, stored_address is not real, stored_address = {}'.format(stored_address))
                 # mem.clear()  # very conservative
                 # # print '{}: PC={}'.format('MSTORE8', global_state["pc"] - 1)
                 # mem[str(stored_address)] = stored_value
@@ -2209,7 +2156,8 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
             offset = stack.pop(0)
             length = stack.pop(0)
             new_var_name = gen.gen_arbitrary_var()
-            var_origins[new_var_name] = ("CREATE({}, mem[{}, {}])".format(str(value), str(offset), str(length)), global_state["pc"] - 1)
+            var_origins[new_var_name] = (
+                "CREATE({}, mem[{}, {}])".format(str(value), str(offset), str(length)), global_state["pc"] - 1)
 
             new_var = BitVec(new_var_name, 256)
             stack.insert(0, new_var)  # this operation can fail
@@ -2218,163 +2166,162 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
     elif opcode == "CALL":
         # TODO: Need to handle miu_i
         if len(stack) > 6:
-            calls.append(global_state["pc"])
-            for call_pc in calls:
-                if call_pc not in calls_affect_state:
-                    calls_affect_state[call_pc] = False
-            global_state["pc"] = global_state["pc"] + 1
-            outgas = stack.pop(0)
-            recipient = stack.pop(0)
-            transfer_amount = stack.pop(0)
-            start_data_input = stack.pop(0)
-            size_data_input = stack.pop(0)
-            start_data_output = stack.pop(0)
-            size_data_ouput = stack.pop(0)
-            # in the paper, it is shaky when the size of data output is
-            # min of stack[6] and the | o |
-
-            if isReal(transfer_amount):
-                transfer_amount = to_real(transfer_amount)
-
-                if transfer_amount == 0:
-                    stack.insert(0, 1)  # x = 1, assume this call will always succeed without side effects
-                    return
-
-            # Let us ignore the call depth
-            balance_ia = global_state["balance"]["Ia"]
-            is_enough_fund = (transfer_amount <= balance_ia)
-            solver.push()
-            solver.add(is_enough_fund)
-
-            if check_sat(solver) == unsat:
-                # this means not enough fund, thus the execution will result in exception
-                solver.pop()
-                stack.insert(0, 0)  # x = 0
-            else:
-                # the execution is possibly okay
-                stack.insert(0, 1)  # x = 1, do not consider the specific execution, assume it is correct
-                solver.pop()
-                solver.add(is_enough_fund)
-                path_conditions_and_vars["path_condition"].append(is_enough_fund)
-                path_condition_origins.append((params.global_state["pc"] - 1, 'CALL'))
-                new_balance_ia = (balance_ia - transfer_amount)
-                global_state["balance"]["Ia"] = new_balance_ia
-                address_is = path_conditions_and_vars["Is"]
-                address_is = (address_is & CONSTANT_ONES_159)  # 2^160 - 1
-                boolean_expression = (recipient != address_is)  # if can call back to caller
-                solver.push()
-                solver.add(boolean_expression)
-                if check_sat(solver) == unsat:  # recipient is the same as (current) caller
-                    solver.pop()
-                    new_balance_is = (global_state["balance"]["Is"] + transfer_amount)
-                    global_state["balance"]["Is"] = new_balance_is
-                else:
-                    solver.pop()
-                    if isReal(recipient):
-                        recipient = to_real(recipient)
-
-                        new_address_name = "concrete_address_" + str(recipient)
-                    else:
-                        new_address_name = gen.gen_arbitrary_address_var()
-                        var_origins[new_address_name] = ("ADDRESS({})".format(str(recipient)), global_state["pc"] - 1)
-                        
-                    old_balance_name = gen.gen_arbitrary_var()
-                    var_origins[old_balance_name] = ("BALANCE({})".format(str(recipient)), global_state["pc"] - 1)
-
-                    old_balance = BitVec(old_balance_name, 256)  # balance for the callee before this CALL
-                    path_conditions_and_vars[old_balance_name] = old_balance
-                    constraint = (old_balance >= 0)
-                    solver.add(constraint)
-                    path_conditions_and_vars["path_condition"].append(constraint)
-                    path_condition_origins.append((params.global_state["pc"] - 1, 'CALL'))
-                    new_balance = (old_balance + transfer_amount)
-                    global_state["balance"][new_address_name] = new_balance
+            raise NotImplementedError('CALL is not supported currently')
+            # calls.append(global_state["pc"])
+            #
+            # global_state["pc"] = global_state["pc"] + 1
+            # outgas = stack.pop(0)
+            # recipient = stack.pop(0)
+            # transfer_amount = stack.pop(0)
+            # start_data_input = stack.pop(0)
+            # size_data_input = stack.pop(0)
+            # start_data_output = stack.pop(0)
+            # size_data_ouput = stack.pop(0)
+            # # in the paper, it is shaky when the size of data output is
+            # # min of stack[6] and the | o |
+            #
+            # if isReal(transfer_amount):
+            #     transfer_amount = to_real(transfer_amount)
+            #
+            #     if transfer_amount == 0:
+            #         stack.insert(0, 1)  # x = 1, assume this call will always succeed without side effects
+            #         return
+            #
+            # # Let us ignore the call depth
+            # balance_ia = global_state["balance"]["Ia"]
+            # is_enough_fund = (transfer_amount <= balance_ia)
+            # solver.push()
+            # solver.add(is_enough_fund)
+            #
+            # if check_sat(solver) == unsat:
+            #     # this means not enough fund, thus the execution will result in exception
+            #     solver.pop()
+            #     stack.insert(0, 0)  # x = 0
+            # else:
+            #     # the execution is possibly okay
+            #     stack.insert(0, 1)  # x = 1, do not consider the specific execution, assume it is correct
+            #     solver.pop()
+            #     solver.add(is_enough_fund)
+            #     path_conditions_and_vars["path_condition"].append(is_enough_fund)
+            #     path_condition_origins.append((params.global_state["pc"] - 1, 'CALL'))
+            #     new_balance_ia = (balance_ia - transfer_amount)
+            #     global_state["balance"]["Ia"] = new_balance_ia
+            #     address_is = path_conditions_and_vars["Is"]
+            #     address_is = (address_is & CONSTANT_ONES_159)  # 2^160 - 1
+            #     boolean_expression = (recipient != address_is)  # if can call back to caller
+            #     solver.push()
+            #     solver.add(boolean_expression)
+            #     if check_sat(solver) == unsat:  # recipient is the same as (current) caller
+            #         solver.pop()
+            #         new_balance_is = (global_state["balance"]["Is"] + transfer_amount)
+            #         global_state["balance"]["Is"] = new_balance_is
+            #     else:
+            #         solver.pop()
+            #         if isReal(recipient):
+            #             recipient = to_real(recipient)
+            #
+            #             new_address_name = "concrete_address_" + str(recipient)
+            #         else:
+            #             new_address_name = gen.gen_arbitrary_address_var()
+            #             var_origins[new_address_name] = ("ADDRESS({})".format(str(recipient)), global_state["pc"] - 1)
+            #
+            #         old_balance_name = gen.gen_arbitrary_var()
+            #         var_origins[old_balance_name] = ("BALANCE({})".format(str(recipient)), global_state["pc"] - 1)
+            #
+            #         old_balance = BitVec(old_balance_name, 256)  # balance for the callee before this CALL
+            #         path_conditions_and_vars[old_balance_name] = old_balance
+            #         constraint = (old_balance >= 0)
+            #         solver.add(constraint)
+            #         path_conditions_and_vars["path_condition"].append(constraint)
+            #         path_condition_origins.append((params.global_state["pc"] - 1, 'CALL'))
+            #         new_balance = (old_balance + transfer_amount)
+            #         global_state["balance"][new_address_name] = new_balance
         else:
             raise ValueError('STACK underflow')
     elif opcode == "CALLCODE":
         # TODO: Need to handle miu_i
         if len(stack) > 6:
-            calls.append(global_state["pc"])
-            for call_pc in calls:
-                if call_pc not in calls_affect_state:
-                    calls_affect_state[call_pc] = False
-            global_state["pc"] = global_state["pc"] + 1
-            outgas = stack.pop(0)
-            recipient = stack.pop(0)  # this is not used as recipient
-            if global_params.USE_GLOBAL_STORAGE:
-                if isReal(recipient):
-                    recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
-
-                    recipient = hex(recipient)
-                    if recipient[-1] == "L":
-                        recipient = recipient[:-1]
-                    recipients.add(recipient)
-                else:
-                    recipients.add(None)
-
-            transfer_amount = stack.pop(0)
-            start_data_input = stack.pop(0)
-            size_data_input = stack.pop(0)
-            start_data_output = stack.pop(0)
-            size_data_ouput = stack.pop(0)
-            # in the paper, it is shaky when the size of data output is
-            # min of stack[6] and the | o |
-
-            if isReal(transfer_amount):
-                transfer_amount = to_real(transfer_amount)  # convert from BitVecVal() to int() or long()
-
-                if transfer_amount == 0:
-                    stack.insert(0, 1)  # x = 1, assume execution is correct without side effects
-                    return
-
-            # Let us ignore the call depth
-            balance_ia = global_state["balance"]["Ia"]
-            is_enough_fund = (transfer_amount <= balance_ia)
-            solver.push()
-            solver.add(is_enough_fund)
-
-            if check_sat(solver) == unsat:
-                # this means not enough fund, thus the execution will result in exception
-                solver.pop()
-                stack.insert(0, 0)  # x = 0
-            else:
-                # the execution is possibly okay
-                stack.insert(0, 1)  # x = 1
-                solver.pop()
-                solver.add(is_enough_fund)
-                path_conditions_and_vars["path_condition"].append(is_enough_fund)
-                path_condition_origins.append((params.global_state["pc"] - 1, 'CALLCODE'))
+            raise NotImplementedError('CALLCODE is not supported currently')
+            # calls.append(global_state["pc"])
+            #
+            # global_state["pc"] = global_state["pc"] + 1
+            # outgas = stack.pop(0)
+            # recipient = stack.pop(0)  # this is not used as recipient
+            # if global_params.USE_GLOBAL_STORAGE:
+            #     if isReal(recipient):
+            #         recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
+            #
+            #         recipient = hex(recipient)
+            #         if recipient[-1] == "L":
+            #             recipient = recipient[:-1]
+            #         recipients.add(recipient)
+            #     else:
+            #         recipients.add(None)
+            #
+            # transfer_amount = stack.pop(0)
+            # start_data_input = stack.pop(0)
+            # size_data_input = stack.pop(0)
+            # start_data_output = stack.pop(0)
+            # size_data_ouput = stack.pop(0)
+            # # in the paper, it is shaky when the size of data output is
+            # # min of stack[6] and the | o |
+            #
+            # if isReal(transfer_amount):
+            #     transfer_amount = to_real(transfer_amount)  # convert from BitVecVal() to int() or long()
+            #
+            #     if transfer_amount == 0:
+            #         stack.insert(0, 1)  # x = 1, assume execution is correct without side effects
+            #         return
+            #
+            # # Let us ignore the call depth
+            # balance_ia = global_state["balance"]["Ia"]
+            # is_enough_fund = (transfer_amount <= balance_ia)
+            # solver.push()
+            # solver.add(is_enough_fund)
+            #
+            # if check_sat(solver) == unsat:
+            #     # this means not enough fund, thus the execution will result in exception
+            #     solver.pop()
+            #     stack.insert(0, 0)  # x = 0
+            # else:
+            #     # the execution is possibly okay
+            #     stack.insert(0, 1)  # x = 1
+            #     solver.pop()
+            #     solver.add(is_enough_fund)
+            #     path_conditions_and_vars["path_condition"].append(is_enough_fund)
+            #     path_condition_origins.append((params.global_state["pc"] - 1, 'CALLCODE'))
         else:
             raise ValueError('STACK underflow')
     elif opcode in ("DELEGATECALL", "STATICCALL"):
         if len(stack) > 5:
-            global_state["pc"] += 1
-            outgas = stack.pop(0)
-            recipient = stack.pop(0)
-
-            if global_params.USE_GLOBAL_STORAGE:
-                if isReal(recipient):
-                    recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
-
-                    recipient = hex(recipient)
-                    if recipient[-1] == "L":
-                        recipient = recipient[:-1]
-                    recipients.add(recipient)
-                else:
-                    recipients.add(None)
-
-            start_data_input = stack.pop(0)
-            size_data_input = stack.pop(0)
-            start_data_output = stack.pop(0)
-            size_data_ouput = stack.pop(0)
-
-            new_var_name = gen.gen_arbitrary_var()
-            var_origins[new_var_name] = ("{}({}, {}, {}, {}, {}, {})".\
-                format(opcode, str(outgas), str(recipient), str(start_data_input), str(size_data_input),
-                       str(start_data_output), str(size_data_ouput)), global_state["pc"] - 1)
-
-            new_var = BitVec(new_var_name, 256)
-            stack.insert(0, new_var)  # so these two operations can fail
+            raise NotImplementedError('{} is not supported currently'.format(opcode))
+            # global_state["pc"] += 1
+            # outgas = stack.pop(0)
+            # recipient = stack.pop(0)
+            #
+            # if global_params.USE_GLOBAL_STORAGE:
+            #     if isReal(recipient):
+            #         recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
+            #
+            #         recipient = hex(recipient)
+            #         if recipient[-1] == "L":
+            #             recipient = recipient[:-1]
+            #         recipients.add(recipient)
+            #     else:
+            #         recipients.add(None)
+            #
+            # start_data_input = stack.pop(0)
+            # size_data_input = stack.pop(0)
+            # start_data_output = stack.pop(0)
+            # size_data_ouput = stack.pop(0)
+            #
+            # new_var_name = gen.gen_arbitrary_var()
+            # var_origins[new_var_name] = ("{}({}, {}, {}, {}, {}, {})".\
+            #     format(opcode, str(outgas), str(recipient), str(start_data_input), str(size_data_input),
+            #            str(start_data_output), str(size_data_ouput)), global_state["pc"] - 1)
+            #
+            # new_var = BitVec(new_var_name, 256)
+            # stack.insert(0, new_var)  # so these two operations can fail
         else:
             raise ValueError('STACK underflow')
     elif opcode in ("RETURN", "REVERT"):
@@ -2389,31 +2336,32 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         else:
             raise ValueError('STACK underflow')
     elif opcode == "SUICIDE":
-        global_state["pc"] = global_state["pc"] + 1
-        recipient = stack.pop(0)
-        transfer_amount = global_state["balance"]["Ia"]
-        global_state["balance"]["Ia"] = 0
-
-        if isReal(recipient):
-            recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
-
-            new_address_name = "concrete_address_" + str(recipient)
-        else:
-            new_address_name = gen.gen_arbitrary_address_var()
-            var_origins[new_address_name] = ("ADDRESS({})".format(str(recipient)), global_state["pc"] - 1)
-
-        old_balance_name = gen.gen_arbitrary_var()
-        var_origins[old_balance_name] = ("BALANCE({})".format(str(recipient)), global_state["pc"] - 1)
-
-        old_balance = BitVec(old_balance_name, 256)  # balance for beneficial address before this SUICIDE
-        path_conditions_and_vars[old_balance_name] = old_balance
-        constraint = (old_balance >= 0)
-        solver.add(constraint)
-        path_conditions_and_vars["path_condition"].append(constraint)
-        path_condition_origins.append((params.global_state["pc"] - 1, 'SUICIDE'))
-        new_balance = (old_balance + transfer_amount)
-        global_state["balance"][new_address_name] = new_balance
-        # TODO
+        raise NotImplementedError('SUICIDE is not supported currently')
+        # global_state["pc"] = global_state["pc"] + 1
+        # recipient = stack.pop(0)
+        # transfer_amount = global_state["balance"]["Ia"]
+        # global_state["balance"]["Ia"] = 0
+        #
+        # if isReal(recipient):
+        #     recipient = to_real(recipient)  # convert from BitVecVal() to int() or long()
+        #
+        #     new_address_name = "concrete_address_" + str(recipient)
+        # else:
+        #     new_address_name = gen.gen_arbitrary_address_var()
+        #     var_origins[new_address_name] = ("ADDRESS({})".format(str(recipient)), global_state["pc"] - 1)
+        #
+        # old_balance_name = gen.gen_arbitrary_var()
+        # var_origins[old_balance_name] = ("BALANCE({})".format(str(recipient)), global_state["pc"] - 1)
+        #
+        # old_balance = BitVec(old_balance_name, 256)  # balance for beneficial address before this SUICIDE
+        # path_conditions_and_vars[old_balance_name] = old_balance
+        # constraint = (old_balance >= 0)
+        # solver.add(constraint)
+        # path_conditions_and_vars["path_condition"].append(constraint)
+        # path_condition_origins.append((params.global_state["pc"] - 1, 'SUICIDE'))
+        # new_balance = (old_balance + transfer_amount)
+        # global_state["balance"][new_address_name] = new_balance
+        # # TODO
         return
 
     else:

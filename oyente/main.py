@@ -68,7 +68,10 @@ def on_test_traces(index, test_traces, result_dir):
     evm_disasm_pattern = re.compile(r'^.+\.evm\.disasm$')
 
     root_dir = os.path.join(test_traces, str(index))
-    file_list = [file for file in os.listdir(root_dir)
+    full_list = [file for file in os.listdir(root_dir)]
+    temp_list = [file for file in full_list
+                 if evm_pattern.match(file) or evm_disasm_pattern.match(file)]
+    file_list = [file for file in full_list
                  if not evm_pattern.match(file) and not evm_disasm_pattern.match(file)]
     trace_list = [file for file in file_list if trace_doc_pattern.match(file)]  # trace file names
     code_list = [file for file in file_list if trace_code_pattern.match(file)]  # code file names
@@ -112,6 +115,10 @@ def on_test_traces(index, test_traces, result_dir):
 
     result_file.close()
 
+    for file in temp_list:
+        print 'remove temp files for failed job, {}'.format(file)
+        os.remove(os.path.join(root_dir, file))
+
 
 def show_results(index, result_dir, seq_num, num_cases=1, only_exception=False):
     """
@@ -143,16 +150,19 @@ def show_results(index, result_dir, seq_num, num_cases=1, only_exception=False):
             else:
                 print '{sep} {num}: {trace} {sep}\n'.format(sep='=' * 10, num=current_pos + i,
                                                            trace=result_list[current_pos + i]['trace'])
-                if result_list[current_pos + i]['succeed']:
-                    print '{sep} Path Condition {sep}\n'.format(sep='=' * 10)
-                    print result_list[current_pos + i]['path_condition']
-                    print '{sep} Variable Origins {sep}\n'.format(sep='=' * 10)
-                    print result_list[current_pos + i]['var_origins']
-                else:
-                    print '{sep} Error: StdErr {sep}\n'.format(sep='=' * 10)
-                    print result_list[current_pos + i]['stderr']
-                    print '{sep} Error: StdOut {sep}\n'.format(sep='=' * 10)
-                    print result_list[current_pos + i]['stdout']
+                try:
+                    if result_list[current_pos + i]['succeed']:
+                        print '{sep} Path Condition {sep}\n'.format(sep='=' * 10)
+                        print result_list[current_pos + i]['path_condition']
+                        print '{sep} Variable Origins {sep}\n'.format(sep='=' * 10)
+                        print result_list[current_pos + i]['var_origins']
+                    else:
+                        print '{sep} Error: StdErr {sep}\n'.format(sep='=' * 10)
+                        print result_list[current_pos + i]['stderr']
+                        print '{sep} Error: StdOut {sep}\n'.format(sep='=' * 10)
+                        print result_list[current_pos + i]['stdout']
+                except KeyError:
+                    pass
 
         if not show_more:
             print '{sep} The End {sep}'.format(sep='=' * 10)
@@ -179,6 +189,7 @@ if __name__ == '__main__':
     # on_test_traces(9, 'test_traces', 'result')
 
     # show_results(0, 'result', 151, num_cases=1, only_exception=False)
+
     show_results(0, 'result', 0, num_cases=1, only_exception=True)
     show_results(1, 'result', 0, num_cases=1, only_exception=True)
     show_results(2, 'result', 0, num_cases=1, only_exception=True)
