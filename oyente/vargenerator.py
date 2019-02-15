@@ -27,14 +27,13 @@ class Generator:
 
     def gen_arbitrary_address_var(self):
         self.count += 1
-        return "address[{}]".format(str(self.count))
+        return "Address[{}]".format(str(self.count))
 
     def gen_owner_store_var(self, position):
         return "Ia_store[{}]".format(str(position))
 
-    def gen_gas_var(self):
-        self.count += 1
-        return "gas[{}]".format(str(self.count))
+    def gen_gas_var(self, seq, pc):
+        return "Gas[{}; {}]".format(seq, pc)
 
     def gen_gas_price_var(self):
         return "Ip"
@@ -48,14 +47,13 @@ class Generator:
     def gen_origin_var(self):
         return "Io"
 
-    def gen_balance_var(self):
-        self.count += 1
-        return "balance[{}]".format(str(self.count))
+    def gen_balance_var(self, address):
+        return "Balance[{}]".format(str(address))
 
     def gen_code_var(self, address, offset, length):
-        return "code[{}][{}; {}]".format(str(to_real(address)) if isReal(address) else '({})'.format(simplify(address)),
+        return "Code[{}][{}; {}]".format(str(to_real(address)) if isReal(address) else '({})'.format(simplify(address)),
                                          str(to_real(offset)) if isReal(offset) else '({})'.format(simplify(offset)),
                                          str(to_real(length)) if isReal(length) else '({})'.format(simplify(length)))
 
     def gen_code_size_var(self, address):
-        return "code_size[{}]".format(str(address))
+        return "CodeSize[{}]".format(str(address))
