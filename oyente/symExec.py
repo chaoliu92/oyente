@@ -737,8 +737,14 @@ def set_mem_code(mem, offset, length, code):
 
     offset, length = all_to_real(offset, length)  # convert from BitVecVal() to int() or long()
 
+    assert len(code) % 2 == 0, 'Error, corrupted code, len(code) is not even, code = {}, len(code) = {}'.\
+        format(code, len(code))
+
+    if len(code) < length * 2:  # add trailing STOP (i.e., 0x00) instructions to incomplete code
+        code += '00' * (length - len(code) / 2)
+
     code_pattern = re.compile(r'^([0-9a-fA-F]*)$')
-    assert code_pattern.match(code) and len(code) == 2 * length, 'Invalid content, content = {}'.format(code)
+    assert code_pattern.match(code), 'Invalid content, content = {}'.format(code)
 
     code = bytearray.fromhex(code)  # code in bytearray type
 
@@ -2134,6 +2140,7 @@ def sym_exec_ins(params, block, instr, func_call, current_func_name):
         global_state["pc"] = global_state["pc"] + 1
     elif opcode == "MSIZE":
         global_state["pc"] = global_state["pc"] + 1
+
         msize = to_symbolic(32 * global_state["miu_i"])  # modeled as BitVecVal(msize, 256), miu_i may be symbolic expr
         stack.insert(0, msize)
     elif opcode == "GAS":
